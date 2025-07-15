@@ -10,5 +10,10 @@ class PlatformDefault:
 
     def get_version(self):
         return self.version
+
+    def get_live(self):
+        print(f"Get Live Stream Platform: {self.platform}, Version: {self.version}")
+
+
     
     
