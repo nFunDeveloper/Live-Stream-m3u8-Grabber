@@ -1,5 +1,6 @@
 services:
   live-m3u8-grabber:
+    image: live-stream-m3u8-grabber:latest
     build:
       context: ./stream-service
       dockerfile: Dockerfile
