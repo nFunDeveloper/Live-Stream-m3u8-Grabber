@@ -1,0 +1,9 @@
+services:
+  live-m3u8-grabber:
+    build:
+      context: ./stream-service
+      dockerfile: Dockerfile
+    container_name: live-stream-m3u8-grabber
+    ports:
+      - "9999:9999"
+    restart: always
