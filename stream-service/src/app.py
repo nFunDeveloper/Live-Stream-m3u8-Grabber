@@ -107,7 +107,11 @@ def grab_api():
 
 @app.route('/<path:platform_name>/<path:streamer_id>/<path:quality>', methods=['GET'])
 def get_live(platform_name, streamer_id, quality='540p'):
-    m3u8_url = get_m3u8(platform_name, streamer_id, quality)
+    try:
+        m3u8_url = get_m3u8(platform_name, streamer_id, quality)
+    except PermissionError as e:
+        logger.warning("[get_live] stream access denied: %s", e)
+        return {"error": str(e)}, 403
     return redirect(m3u8_url, code=302)
 
 
@@ -162,7 +166,11 @@ def auto_url_parser(quality):
         if not streamer_id:
             return "Invalid streamer URL format", 400
 
-        m3u8_url = get_m3u8(detected_platform[0], streamer_id, quality)
+        try:
+            m3u8_url = get_m3u8(detected_platform[0], streamer_id, quality)
+        except PermissionError as e:
+            logger.warning("[detect] stream access denied: %s", e)
+            return {"error": str(e)}, 403
         if not m3u8_url:
             return "Live stream not found", 404
 
