@@ -289,7 +289,7 @@ function App() {
                 </div>
                 <h4 className="font-medium text-zinc-300 text-sm sm:text-base mb-1">입력 대기 중</h4>
                 <p className="text-[11px] sm:text-xs text-zinc-500 max-w-xs leading-relaxed">
-                  치지직이나 SOOP의 생방송 채널 URL을 입력하면 실시간 플레이어가 활성화됩니다.
+                  치지직, SOOP, ci.me, 팬더라이브, 팝콘TV의 생방송 채널 URL을 입력하면 실시간 플레이어가 활성화됩니다.
                 </p>
               </div>
             )}
@@ -306,7 +306,7 @@ function App() {
                   <Link2 className="text-zinc-500 w-4 h-4 mr-3 flex-shrink-0" />
                   <input
                     type="url"
-                    placeholder="https://chzzk.naver.com/live/... 또는 https://play.sooplive.com/..."
+                    placeholder="치지직, SOOP, ci.me, 팬더라이브, 팝콘TV URL"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     className="w-full bg-transparent border-none outline-none text-white placeholder:text-zinc-500 text-sm"
