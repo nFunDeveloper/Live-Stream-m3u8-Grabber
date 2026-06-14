@@ -1,10 +1,16 @@
 services:
-  live-m3u8-grabber:
-    image: live-stream-m3u8-grabber:latest
+  nginx:
+    build:
+      context: .
+      dockerfile: stream-service/Dockerfile.nginx
+    ports:
+      - "10000:80"
+    depends_on: [backend]
+    restart: always
+
+  backend:
     build:
       context: ./stream-service
-      dockerfile: Dockerfile
-    container_name: live-stream-m3u8-grabber
-    ports:
-      - "9999:9999"
+      dockerfile: Dockerfile.backend
+    expose: ["10000"]
     restart: always

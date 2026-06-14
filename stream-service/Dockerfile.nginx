@@ -1,0 +1,4 @@
+FROM nginx:alpine
+COPY nginx/nginx.prod.conf /etc/nginx/conf.d/default.conf
+COPY stream-service/src/ui/dist /usr/share/nginx/html
+EXPOSE 80

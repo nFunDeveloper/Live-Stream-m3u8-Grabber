@@ -1,0 +1,25 @@
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile.dev
+    ports:
+      - "10000:80"
+    depends_on: [vite-dev, backend]
+
+  vite-dev:
+    image: node:22-slim
+    working_dir: /app
+    environment:
+      - VITE_BASE=/develop/
+    volumes:
+      - ./stream-service/src/ui:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    expose: ["5173"]
+
+  backend:
+    build:
+      context: ./stream-service
+      dockerfile: Dockerfile.backend
+    expose: ["10000"]
