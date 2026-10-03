@@ -238,7 +238,7 @@ export default function Sidebar({
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full w-full min-w-0 flex flex-col">
       {/* 브랜드 */}
       <div className="flex items-center gap-2.5 px-4 h-14 shrink-0 border-b border-white/5">
         <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center">
