@@ -59,7 +59,9 @@ class PlatformDefault:
                 continue
 
             if self._stream_info_matches_quality(line, quality):
-                variant_url = urljoin(master_m3u8_url, variant_path)
+                variant_url = urljoin(
+                    master_m3u8_url, self._clean_variant_path(variant_path)
+                )
                 logger.info(
                     "[playlist] selected variant quality=%s stream_info=%s variant_url=%s",
                     quality,
@@ -79,3 +81,8 @@ class PlatformDefault:
             or f'VIDEO="{quality}' in stream_info
             or f"x{height}" in stream_info
         )
+
+    @staticmethod
+    def _clean_variant_path(variant_path):
+        # 기본값은 그대로 쓰고, 일부 플랫폼만 응답을 정리한다
+        return variant_path

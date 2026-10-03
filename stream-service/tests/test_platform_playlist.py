@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from platform_modules.pandalive import Pandalive
 from platform_modules.platform_default import PlatformDefault
 from platform_modules.popkon import Popkon
+from platform_modules.soop import Soop
 
 
 MASTER_PLAYLIST = """#EXTM3U
@@ -184,6 +185,77 @@ class ChzzkSearchTests(unittest.TestCase):
             results = chzzk_module.Chzzk().search_lives("오프라인", limit=8)
 
         self.assertEqual(results, [])
+
+
+class SoopTests(unittest.TestCase):
+    """SOOP는 .co.kr CNAME이 끊겨 있어 .com 으로 폴백해야 한다"""
+
+    # SOOP master는 화질명(NAME=hd)과 끝의 쉼표가 붙은 상대 경로로 내려온다
+    SOOP_MASTER = """#EXTM3U
+#EXT-X-STREAM-INF:NAME=hd,BANDWIDTH=777600,RESOLUTION=960x540
+auth_playlist.m3u8?aid=HD_AID,
+#EXT-X-STREAM-INF:NAME=sd,BANDWIDTH=345600,RESOLUTION=640x360
+auth_playlist.m3u8?aid=SD_AID,
+"""
+
+    def test_falls_back_to_com_when_co_kr_unresolvable(self):
+        import requests
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        tried = []
+        error_type = requests.RequestException  # patch 후에도 실제 예외 타입 유지
+
+        class _Fake:
+            def get(self, url, headers=None, timeout=None):
+                tried.append(url)
+                if 'sooplive.co.kr' in url:
+                    raise error_type("Name or service not known")
+                return FakeResponse({"result": "1", "view_url": "https://cdn.test/auth.m3u8"})
+
+        with patch.object(soop_module, 'requests', _Fake()):
+            body = soop_module.Soop()._Soop__get_soop_broad_url(297561449, "hd")
+
+        self.assertTrue(any('sooplive.co.kr' in url for url in tried))
+        self.assertTrue(any('sooplive.com' in url for url in tried))
+        self.assertEqual(body["view_url"], "https://cdn.test/auth.m3u8")
+
+    def test_returns_empty_when_every_host_fails(self):
+        import requests
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        error_type = requests.RequestException
+
+        class _Fake:
+            def get(self, url, headers=None, timeout=None):
+                raise error_type("Name or service not known")
+
+        with patch.object(soop_module, 'requests', _Fake()):
+            body = soop_module.Soop()._Soop__get_soop_broad_url(297561449, "hd")
+
+        self.assertEqual(body, {})
+
+    def test_selects_variant_by_resolution(self):
+        platform = Soop()
+        platform.session = FakeSession([self.SOOP_MASTER])
+        url = platform.get_variant_url_from_master(
+            "https://pc.test/auth_master_playlist.m3u8?aid=MASTER", "540p",
+            Soop.playlist_headers,
+        )
+        # 쉼표가 제거되고 master aid가 아닌 variant 자체 aid를 유지한다
+        self.assertEqual(
+            url, "https://pc.test/auth_playlist.m3u8?aid=HD_AID"
+        )
+
+    def test_returns_empty_for_unavailable_resolution(self):
+        platform = Soop()
+        platform.session = FakeSession([self.SOOP_MASTER])
+        url = platform.get_variant_url_from_master(
+            "https://pc.test/auth_master_playlist.m3u8?aid=MASTER", "1080p",
+            Soop.playlist_headers,
+        )
+        self.assertEqual(url, "")
 
 
 if __name__ == "__main__":
