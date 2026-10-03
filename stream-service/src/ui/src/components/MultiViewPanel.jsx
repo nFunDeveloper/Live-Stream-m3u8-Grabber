@@ -1,15 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { ChevronLeft, Loader2, Eye } from 'lucide-react';
+import { ChevronLeft, Loader2, Eye, Copy, Check } from 'lucide-react';
 import { Button } from '@heroui/react';
 import PlatformChip from './PlatformChip.jsx';
 import { formatViewers } from '../lib/platforms.js';
 
-function MultiViewTile({ member, statuses, onPick }) {
+function MultiViewTile({ member, statuses, focused, onTileClick }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  const copiedTimerRef = useRef(null);
   const [state, setState] = useState('loading'); // loading | ready | error
   const [viewers, setViewers] = useState(statuses?.viewers ?? null);
+  const [freshUrl, setFreshUrl] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,6 +31,7 @@ function MultiViewTile({ member, statuses, onPick }) {
           setState('error');
           return;
         }
+        setFreshUrl(data.m3u8_url);
         setViewers(data.viewers ?? null);
 
         const video = videoRef.current;
@@ -66,13 +74,29 @@ function MultiViewTile({ member, statuses, onPick }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [member.key]);
 
+  const copyUrl = (e) => {
+    e.stopPropagation();
+    if (!freshUrl) return;
+    navigator.clipboard.writeText(freshUrl)
+      .then(() => {
+        setCopied(true);
+        if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
+  };
+
   const isLiveDot = statuses?.is_live === true;
 
   return (
     <div
-      className="relative aspect-video rounded-xl overflow-hidden border border-white/10 bg-black/70 group cursor-pointer hover:border-white/25 transition-colors"
-      onClick={() => onPick(member)}
-      title="클릭하여 크게 보기"
+      className={`relative aspect-video rounded-xl overflow-hidden border bg-black/70 group cursor-pointer transition-colors ${
+        focused
+          ? 'col-span-full order-first max-h-[70vh] border-white/25 hover:border-white/40'
+          : 'border-white/10 hover:border-white/25'
+      }`}
+      onClick={() => onTileClick(member.key)}
+      title={focused ? '클릭하여 그리드로 돌아가기' : '클릭하여 크게 보기'}
     >
       <video
         ref={videoRef}
@@ -92,7 +116,7 @@ function MultiViewTile({ member, statuses, onPick }) {
         </div>
       )}
       {/* 스트리머 정보 */}
-      <div className="absolute top-2 left-2 flex items-center gap-1.5 min-w-0 max-w-[calc(100%-16px)]">
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 min-w-0 max-w-[calc(100%-90px)]">
         <span
           className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveDot ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}
         />
@@ -107,11 +131,27 @@ function MultiViewTile({ member, statuses, onPick }) {
           <span className="text-[10px] text-zinc-200">{formatViewers(viewers)}</span>
         </div>
       )}
+      {/* M3U8 복사 */}
+      {freshUrl && (
+        <button
+          type="button"
+          title="M3U8 URL 복사"
+          onClick={copyUrl}
+          className={`absolute bottom-2 right-2 p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
+            copied
+              ? 'bg-emerald-500/30 border-emerald-400/40 text-emerald-200'
+              : 'bg-black/60 border-white/10 text-zinc-300 hover:text-white hover:bg-black/80'
+          }`}
+        >
+          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+        </button>
+      )}
     </div>
   );
 }
 
-export default function MultiViewPanel({ group, statuses, onClose, onPick }) {
+export default function MultiViewPanel({ group, statuses, onClose }) {
+  const [focusedKey, setFocusedKey] = useState(null);
   const liveMembers = group.members.filter((m) => statuses[m.key]?.is_live === true);
 
   return (
@@ -127,7 +167,7 @@ export default function MultiViewPanel({ group, statuses, onClose, onPick }) {
         <div>
           <h2 className="text-base font-bold text-white leading-tight">{group.name} · 멀티뷰</h2>
           <p className="text-[11px] text-zinc-500">
-            방송 중 {liveMembers.length}개 · 타일을 클릭하면 크게 볼 수 있습니다
+            방송 중 {liveMembers.length}개 · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
           </p>
         </div>
       </div>
@@ -138,13 +178,14 @@ export default function MultiViewPanel({ group, statuses, onClose, onPick }) {
           <p className="text-[11px] text-zinc-600">그룹 멤버가 방송을 시작하면 이 화면에 함께 표시됩니다</p>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className={`grid gap-3 ${focusedKey ? 'grid-cols-2 lg:grid-cols-6' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
           {liveMembers.map((member) => (
             <MultiViewTile
               key={member.key}
               member={member}
               statuses={statuses[member.key]}
-              onPick={onPick}
+              focused={focusedKey === member.key}
+              onTileClick={(key) => setFocusedKey((current) => (current === key ? null : key))}
             />
           ))}
         </div>

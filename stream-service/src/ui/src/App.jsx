@@ -404,10 +404,6 @@ function App() {
               group={multiViewGroup}
               statuses={statuses}
               onClose={() => setMultiViewGroupId(null)}
-              onPick={(member) => {
-                setMultiViewGroupId(null);
-                handleGrab(null, member.url);
-              }}
             />
           ) : (
           <>
