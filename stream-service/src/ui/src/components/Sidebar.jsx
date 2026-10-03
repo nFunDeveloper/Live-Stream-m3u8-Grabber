@@ -23,7 +23,7 @@ function LiveDot({ statusKey, statuses }) {
     <span
       title={title}
       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-        status.is_live ? 'bg-red-500 animate-pulse' : 'bg-zinc-700'
+        status.is_live ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-700'
       }`}
     />
   );
