@@ -170,6 +170,17 @@ function App() {
     return true;
   };
 
+  const reorderGroup = (sourceId, targetId) => {
+    if (sourceId === targetId) return;
+    const list = [...groups];
+    const fromIndex = list.findIndex((item) => item.id === sourceId);
+    const toIndex = list.findIndex((item) => item.id === targetId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, moved);
+    setGroups(saveGroups(list));
+  };
+
   const dropMemberToGroup = (group, payload) => {
     const member = buildGroupMember(payload);
     if (group.members.some((item) => item.key === member.key)) {
@@ -275,6 +286,7 @@ function App() {
     onCreateGroup: createGroup,
     onDeleteGroup: deleteGroup,
     onRenameGroup: renameGroup,
+    onReorderGroup: reorderGroup,
     onPickMember: (member) => handleGrab(null, member.url),
     onDeleteMember: deleteMember,
     onDropMember: dropMemberToGroup,

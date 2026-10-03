@@ -80,7 +80,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   // 히스토리 항목을 사이드바 그룹으로 드래그할 수 있도록 페이로드 실기
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('application/json', JSON.stringify(entry));
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'history', ...entry }));
   };
 
   const offline = statuses[entry.key]?.is_live === false;
@@ -93,11 +93,11 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      title={offline ? '방송 중이 아닙니다' : '드래그하여 그룹에 추가'}
+      title={offline ? '오프라인 — 클릭 불가, 드래그로 그룹에 추가 가능' : '드래그하여 그룹에 추가'}
       onClick={() => !offline && onPick(entry)}
       className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
         offline
-          ? 'opacity-50 cursor-not-allowed'
+          ? 'opacity-50 cursor-grab'
           : 'cursor-grab active:cursor-grabbing hover:bg-white/[0.05]'
       }`}
     >
@@ -123,7 +123,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
   const [dragOver, setDragOver] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -157,12 +157,20 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
     setDragOver(false);
     try {
       const payload = JSON.parse(e.dataTransfer.getData('application/json'));
-      if (payload?.platform && payload?.streamer_id) {
+      if (payload?.type === 'group' && payload?.groupId) {
+        onReorderGroup(payload.groupId, group.id);
+      } else if (payload?.platform && payload?.streamer_id) {
         onDropMember(group, payload);
       }
     } catch {
       // 드래그 페이로드가 아니면 무시
     }
+  };
+
+  // 그룹 헤더를 드래그해 다른 그룹 위에 놓으면 순서가 바뀐다
+  const handleHeaderDragStart = (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'group', groupId: group.id }));
   };
 
   return (
@@ -199,8 +207,11 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
         <div className="flex items-center group/g">
           <button
             type="button"
+            draggable
+            onDragStart={handleHeaderDragStart}
+            title="드래그하여 그룹 순서 변경"
             onClick={onToggle}
-            className="flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
+            className="flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors cursor-grab active:cursor-grabbing"
           >
             {open ? (
               <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
@@ -281,6 +292,7 @@ export default function Sidebar({
   onCreateGroup,
   onDeleteGroup,
   onRenameGroup,
+  onReorderGroup,
   onPickMember,
   onDeleteMember,
   onDropMember,
@@ -367,6 +379,7 @@ export default function Sidebar({
                   onPick={onPickMember}
                   onDeleteGroup={onDeleteGroup}
                   onRenameGroup={onRenameGroup}
+                  onReorderGroup={onReorderGroup}
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}
