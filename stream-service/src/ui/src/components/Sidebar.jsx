@@ -9,6 +9,8 @@ import {
   X,
   Copy,
   Radio,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import PlatformChip from './PlatformChip.jsx';
 import { formatDateTime, formatViewers } from '../lib/platforms.js';
@@ -121,8 +123,28 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
   const [dragOver, setDragOver] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+
+  const startEdit = () => {
+    setEditing(true);
+    setEditName(group.name);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditName('');
+  };
+
+  const submitEdit = () => {
+    const name = editName.trim();
+    if (!name) return;
+    if (name !== group.name && !onRenameGroup(group, name)) return; // 중복이면 편집 유지
+    setEditing(false);
+    setEditName('');
+  };
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -153,25 +175,52 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
         dragOver ? 'ring-1 ring-white/50 bg-white/10' : ''
       }`}
     >
-      <div className="flex items-center group/g">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
-        >
-          {open ? (
-            <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />
-          )}
-          <Layers className="w-3.5 h-3.5 text-zinc-400" />
-          <span className="text-xs font-semibold text-zinc-200 truncate">{group.name}</span>
-          <span className="text-[10px] text-zinc-600 ml-auto">{group.members.length}</span>
-        </button>
-        <IconButton danger title="그룹 삭제" onClick={() => onDeleteGroup(group)}>
-          <Trash2 className="w-3 h-3" />
-        </IconButton>
-      </div>
+      {editing ? (
+        <div className="flex items-center gap-1.5 px-2 py-1.5">
+          <input
+            autoFocus
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitEdit();
+              if (e.key === 'Escape') cancelEdit();
+            }}
+            placeholder="그룹 이름"
+            className="flex-1 min-w-0 bg-white/[0.04] border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-white/40 placeholder:text-zinc-600"
+          />
+          <IconButton title="이름 변경 저장" onClick={submitEdit}>
+            <Check className="w-3 h-3" />
+          </IconButton>
+          <IconButton title="취소" onClick={cancelEdit}>
+            <X className="w-3 h-3" />
+          </IconButton>
+        </div>
+      ) : (
+        <div className="flex items-center group/g">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
+          >
+            {open ? (
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />
+            )}
+            <Layers className="w-3.5 h-3.5 text-zinc-400" />
+            <span className="text-xs font-semibold text-zinc-200 truncate">{group.name}</span>
+            <span className="text-[10px] text-zinc-600 ml-auto">{group.members.length}</span>
+          </button>
+          <div className="hidden group-hover/g:flex items-center gap-0.5 shrink-0">
+            <IconButton title="그룹 이름 변경" onClick={startEdit}>
+              <Pencil className="w-3 h-3" />
+            </IconButton>
+            <IconButton danger title="그룹 삭제" onClick={() => onDeleteGroup(group)}>
+              <Trash2 className="w-3 h-3" />
+            </IconButton>
+          </div>
+        </div>
+      )}
       {open && (
         <div className="ml-3 pl-2 border-l border-white/5 flex flex-col gap-0.5 min-w-0">
           {group.members.length === 0 && (
@@ -231,6 +280,7 @@ export default function Sidebar({
   onClearHistory,
   onCreateGroup,
   onDeleteGroup,
+  onRenameGroup,
   onPickMember,
   onDeleteMember,
   onDropMember,
@@ -316,6 +366,7 @@ export default function Sidebar({
                   onToggle={toggle}
                   onPick={onPickMember}
                   onDeleteGroup={onDeleteGroup}
+                  onRenameGroup={onRenameGroup}
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}

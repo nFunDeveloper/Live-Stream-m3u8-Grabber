@@ -158,6 +158,18 @@ function App() {
     showToast(`'${group.name}' 그룹을 삭제했습니다`);
   };
 
+  const renameGroup = (group, name) => {
+    if (groups.some((item) => item.id !== group.id && item.name === name)) {
+      showToast('이미 존재하는 그룹 이름입니다');
+      return false;
+    }
+    setGroups(saveGroups(
+      groups.map((item) => (item.id === group.id ? { ...item, name } : item))
+    ));
+    showToast(`그룹 이름을 '${name}'(으)로 변경했습니다`);
+    return true;
+  };
+
   const dropMemberToGroup = (group, payload) => {
     const member = buildGroupMember(payload);
     if (group.members.some((item) => item.key === member.key)) {
@@ -262,6 +274,7 @@ function App() {
     onClearHistory: clearAllHistory,
     onCreateGroup: createGroup,
     onDeleteGroup: deleteGroup,
+    onRenameGroup: renameGroup,
     onPickMember: (member) => handleGrab(null, member.url),
     onDeleteMember: deleteMember,
     onDropMember: dropMemberToGroup,
