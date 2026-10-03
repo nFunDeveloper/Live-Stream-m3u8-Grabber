@@ -19,6 +19,7 @@ import {
   loadGroups,
   saveGroups,
   buildGroupMember,
+  entryKey,
 } from './lib/storage.js';
 import { PLATFORM_META } from './lib/platforms.js';
 
@@ -196,6 +197,27 @@ function App() {
     showToast(`'${group.name}' 그룹에 저장했습니다`);
   };
 
+  const moveMemberToGroup = (fromGroupId, toGroupId, member) => {
+    if (fromGroupId === toGroupId) return;
+    const memberKey = entryKey(member.platform, member.streamer_id);
+    const target = groups.find((item) => item.id === toGroupId);
+    if (!target) return;
+
+    setGroups(saveGroups(
+      groups
+        .map((item) =>
+          item.id === fromGroupId
+            ? { ...item, members: item.members.filter((m) => m.key !== memberKey) }
+            : item
+        )
+        .map((item) => {
+          if (item.id !== toGroupId || item.members.some((m) => m.key === memberKey)) return item;
+          return { ...item, members: [buildGroupMember(member), ...item.members] };
+        })
+    ));
+    showToast(`'${target.name}' 그룹으로 이동했습니다`);
+  };
+
   const deleteMember = (group, member) => {
     setGroups(saveGroups(
       groups.map((item) =>
@@ -287,6 +309,7 @@ function App() {
     onDeleteGroup: deleteGroup,
     onRenameGroup: renameGroup,
     onReorderGroup: reorderGroup,
+    onMoveMember: moveMemberToGroup,
     onPickMember: (member) => handleGrab(null, member.url),
     onDeleteMember: deleteMember,
     onDropMember: dropMemberToGroup,

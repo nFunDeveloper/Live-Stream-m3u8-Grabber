@@ -123,7 +123,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
   const [dragOver, setDragOver] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -159,6 +159,8 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
       const payload = JSON.parse(e.dataTransfer.getData('application/json'));
       if (payload?.type === 'group' && payload?.groupId) {
         onReorderGroup(payload.groupId, group.id);
+      } else if (payload?.type === 'member' && payload?.groupId) {
+        onMoveMember(payload.groupId, group.id, payload);
       } else if (payload?.platform && payload?.streamer_id) {
         onDropMember(group, payload);
       }
@@ -171,6 +173,12 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
   const handleHeaderDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/json', JSON.stringify({ type: 'group', groupId: group.id }));
+  };
+
+  // 멤버를 다른 그룹으로 드래그해 이동한다
+  const handleMemberDragStart = (member) => (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'member', groupId: group.id, ...member }));
   };
 
   return (
@@ -246,12 +254,14 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                 key={member.key}
                 role="button"
                 tabIndex={0}
+                draggable
+                onDragStart={handleMemberDragStart(member)}
                 onClick={() => !offline && onPick(member)}
                 onKeyDown={(e) => e.key === 'Enter' && !offline && onPick(member)}
-                title={offline ? '방송 중이 아닙니다' : undefined}
+                title={offline ? '오프라인 — 클릭 불가, 드래그로 다른 그룹으로 이동 가능' : '드래그하여 다른 그룹으로 이동'}
                 className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
                   offline
-                    ? 'opacity-50 cursor-not-allowed'
+                    ? 'opacity-50 cursor-grab'
                     : 'cursor-pointer hover:bg-white/[0.05]'
                 }`}
               >
@@ -293,6 +303,7 @@ export default function Sidebar({
   onDeleteGroup,
   onRenameGroup,
   onReorderGroup,
+  onMoveMember,
   onPickMember,
   onDeleteMember,
   onDropMember,
@@ -380,6 +391,7 @@ export default function Sidebar({
                   onDeleteGroup={onDeleteGroup}
                   onRenameGroup={onRenameGroup}
                   onReorderGroup={onReorderGroup}
+                  onMoveMember={onMoveMember}
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}
