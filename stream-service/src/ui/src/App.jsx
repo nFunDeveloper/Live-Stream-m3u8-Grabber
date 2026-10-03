@@ -41,7 +41,7 @@ const STEPS = [
 
 function EmptyState() {
   return (
-    <div className="w-full aspect-video max-h-[48vh] flex flex-col items-center justify-center gap-6 border border-dashed border-white/10 rounded-xl bg-white/[0.01] px-6 text-center">
+    <div className="w-full aspect-video max-h-[65vh] flex flex-col items-center justify-center gap-6 border border-dashed border-white/10 rounded-xl bg-white/[0.01] px-6 text-center">
       <div className="flex items-center gap-5 sm:gap-8">
         {STEPS.map(({ icon: Icon, label }, index) => (
           <React.Fragment key={label}>
@@ -197,7 +197,7 @@ function App() {
     showToast(`'${group.name}' 그룹에 저장했습니다`);
   };
 
-  const moveMemberToGroup = (fromGroupId, toGroupId, member) => {
+  const moveMemberToGroup = (fromGroupId, toGroupId, member, beforeKey = null) => {
     if (fromGroupId === toGroupId) return;
     const memberKey = entryKey(member.platform, member.streamer_id);
     const target = groups.find((item) => item.id === toGroupId);
@@ -212,10 +212,34 @@ function App() {
         )
         .map((item) => {
           if (item.id !== toGroupId || item.members.some((m) => m.key === memberKey)) return item;
-          return { ...item, members: [buildGroupMember(member), ...item.members] };
+          const members = [...item.members];
+          const insertAt = beforeKey ? members.findIndex((m) => m.key === beforeKey) : -1;
+          const newMember = buildGroupMember(member);
+          if (insertAt >= 0) {
+            members.splice(insertAt, 0, newMember);
+          } else {
+            members.unshift(newMember);
+          }
+          return { ...item, members };
         })
     ));
     showToast(`'${target.name}' 그룹으로 이동했습니다`);
+  };
+
+  const reorderMember = (groupId, sourceKey, targetKey) => {
+    if (sourceKey === targetKey) return;
+    setGroups(saveGroups(
+      groups.map((item) => {
+        if (item.id !== groupId) return item;
+        const fromIndex = item.members.findIndex((m) => m.key === sourceKey);
+        const toIndex = item.members.findIndex((m) => m.key === targetKey);
+        if (fromIndex === -1 || toIndex === -1) return item;
+        const members = [...item.members];
+        const [moved] = members.splice(fromIndex, 1);
+        members.splice(toIndex, 0, moved);
+        return { ...item, members };
+      })
+    ));
   };
 
   const deleteMember = (group, member) => {
@@ -310,6 +334,7 @@ function App() {
     onRenameGroup: renameGroup,
     onReorderGroup: reorderGroup,
     onMoveMember: moveMemberToGroup,
+    onReorderMember: reorderMember,
     onPickMember: (member) => handleGrab(null, member.url),
     onDeleteMember: deleteMember,
     onDropMember: dropMemberToGroup,
@@ -363,7 +388,7 @@ function App() {
           </div>
         </header>
 
-        <div className="w-full max-w-3xl px-4 py-6 flex flex-col gap-5 my-auto">
+        <div className="w-full px-4 sm:px-6 py-6 flex flex-col gap-5 my-auto">
           {/* 입력 폼 */}
           <form
             onSubmit={handleGrab}
@@ -432,7 +457,7 @@ function App() {
           )}
         </div>
 
-        <footer className="w-full max-w-3xl px-4 text-center pb-4 pt-2">
+        <footer className="w-full px-4 sm:px-6 text-center pb-4 pt-2">
           <p className="text-[10px] text-zinc-600">
             &copy; 2026 M3U8 Grabber. All rights reserved. &bull; Crafted by Luna
           </p>

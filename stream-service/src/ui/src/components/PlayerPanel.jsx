@@ -118,7 +118,7 @@ export default function PlayerPanel({ result, showToast }) {
   return (
     <div className="flex flex-col gap-3 animate-fade-in w-full">
       {/* 16:9 플레이어 */}
-      <div className="relative w-full aspect-video max-h-[48vh] rounded-xl overflow-hidden border border-white/10 bg-black/60 shadow-2xl">
+      <div className="relative w-full aspect-video max-h-[65vh] rounded-xl overflow-hidden border border-white/10 bg-black/60 shadow-2xl">
         <video
           ref={videoRef}
           className="w-full h-full object-contain"

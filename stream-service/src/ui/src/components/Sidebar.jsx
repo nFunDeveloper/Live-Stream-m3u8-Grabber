@@ -123,8 +123,9 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onReorderMember, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
   const [dragOver, setDragOver] = useState(false);
+  const [dragOverMemberKey, setDragOverMemberKey] = useState(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
 
@@ -256,10 +257,37 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                 tabIndex={0}
                 draggable
                 onDragStart={handleMemberDragStart(member)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverMemberKey !== member.key) setDragOverMemberKey(member.key);
+                }}
+                onDragLeave={() => setDragOverMemberKey((key) => (key === member.key ? null : key))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverMemberKey(null);
+                  try {
+                    const payload = JSON.parse(e.dataTransfer.getData('application/json'));
+                    if (payload?.type !== 'member' || !payload.key) return;
+                    if (payload.groupId === group.id) {
+                      onReorderMember(group.id, payload.key, member.key);
+                    } else {
+                      onMoveMember(payload.groupId, group.id, payload, member.key);
+                    }
+                  } catch {
+                    // 드래그 페이로드가 아니면 무시
+                  }
+                }}
                 onClick={() => !offline && onPick(member)}
                 onKeyDown={(e) => e.key === 'Enter' && !offline && onPick(member)}
-                title={offline ? '오프라인 — 클릭 불가, 드래그로 다른 그룹으로 이동 가능' : '드래그하여 다른 그룹으로 이동'}
-                className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
+                title={offline ? '오프라인 — 클릭 불가, 드래그로 이동/정렬 가능' : '드래그하여 순서 변경 또는 다른 그룹으로 이동'}
+                className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all min-w-0 ${
+                  dragOverMemberKey === member.key
+                    ? 'ring-1 ring-white/50 bg-white/10'
+                    : ''
+                } ${
                   offline
                     ? 'opacity-50 cursor-grab'
                     : 'cursor-pointer hover:bg-white/[0.05]'
@@ -304,6 +332,7 @@ export default function Sidebar({
   onRenameGroup,
   onReorderGroup,
   onMoveMember,
+  onReorderMember,
   onPickMember,
   onDeleteMember,
   onDropMember,
@@ -392,6 +421,7 @@ export default function Sidebar({
                   onRenameGroup={onRenameGroup}
                   onReorderGroup={onReorderGroup}
                   onMoveMember={onMoveMember}
+                  onReorderMember={onReorderMember}
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}
