@@ -22,17 +22,13 @@ import {
   buildGroupMember,
   entryKey,
 } from './lib/storage.js';
-import { PLATFORM_META } from './lib/platforms.js';
-
-const qualities = [
-  { key: 'auto', label: 'Auto (자동)' },
-  { key: '1080p', label: '1080p (FHD)' },
-  { key: '720p', label: '720p (HD)' },
-  { key: '540p', label: '540p (SD)' },
-  { key: '480p', label: '480p (SD)' },
-  { key: '360p', label: '360p (SD)' },
-  { key: '144p', label: '144p (Low)' },
-];
+import { PLATFORM_META, platformMeta } from './lib/platforms.js';
+import {
+  QUALITY_OPTIONS,
+  detectPlatform,
+  supportedQualities,
+  resolveQuality,
+} from './lib/qualities.js';
 
 const STEPS = [
   { icon: Link2, label: '방송 URL 입력' },
@@ -88,6 +84,27 @@ function App() {
   const [statuses, setStatuses] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [multiViewGroupId, setMultiViewGroupId] = useState(null);
+
+  // 입력된 URL의 플랫폼에 따라 선택 가능한 해상도만 남긴다.
+  const detectedPlatform = useMemo(() => detectPlatform(url), [url]);
+  const supportedKeys = useMemo(
+    () => supportedQualities(detectedPlatform),
+    [detectedPlatform]
+  );
+  const qualities = useMemo(
+    () =>
+      QUALITY_OPTIONS.map((option) => ({
+        ...option,
+        supported: supportedKeys.includes(option.key),
+      })),
+    [supportedKeys]
+  );
+  const disabledQualityCount = qualities.filter((item) => !item.supported).length;
+
+  // 지금 선택된 해상도가 새 플랫폼에서 미지원이면 auto로 되돌린다.
+  useEffect(() => {
+    setQuality((current) => resolveQuality(current, detectedPlatform));
+  }, [detectedPlatform]);
 
   const toastTimerRef = useRef(null);
 
@@ -429,22 +446,41 @@ function App() {
             </div>
 
             <div className="w-full sm:w-40 flex flex-col text-left shrink-0">
-              <label className="text-zinc-300 font-medium text-xs mb-1.5 ml-1">해상도</label>
+              <label className="text-zinc-300 font-medium text-xs mb-1.5 ml-1 flex items-center gap-1.5">
+                해상도
+                {detectedPlatform && (
+                  <span className={`text-[10px] font-normal ${platformMeta(detectedPlatform).text}`}>
+                    {platformMeta(detectedPlatform).label}
+                  </span>
+                )}
+              </label>
               <div className="glass-input flex items-center h-10 px-3 rounded-lg relative">
                 <select
                   value={quality}
                   onChange={(e) => setQuality(e.target.value)}
-                  className="w-full bg-transparent border-none outline-none text-white text-sm cursor-pointer appearance-none pr-8 z-10"
+                  className="w-full bg-transparent border-none outline-none text-white text-sm cursor-pointer appearance-none pr-8 z-10 disabled:cursor-not-allowed"
                   style={{ colorScheme: 'dark' }}
                 >
                   {qualities.map((q) => (
-                    <option key={q.key} value={q.key} className="bg-[#121216] text-white">
+                    <option
+                      key={q.key}
+                      value={q.key}
+                      disabled={!q.supported}
+                      className="bg-[#121216] text-white disabled:text-zinc-600"
+                    >
                       {q.label}
+                      {!q.supported && ' — 지원 안 함'}
                     </option>
                   ))}
                 </select>
                 <ChevronDown className="absolute right-3 text-zinc-500 w-4 h-4 pointer-events-none" />
               </div>
+              {disabledQualityCount > 0 && (
+                <p className="text-[10px] text-zinc-600 mt-1 ml-1 leading-tight">
+                  {platformMeta(detectedPlatform).label}는 {supportedKeys.length - 1}개
+                  해상도만 제공합니다
+                </p>
+              )}
             </div>
 
             <Button
