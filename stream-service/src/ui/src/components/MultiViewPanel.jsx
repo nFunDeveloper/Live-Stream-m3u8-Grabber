@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { ChevronLeft, Loader2, Eye, Copy, Check } from 'lucide-react';
+import { ChevronLeft, Loader2, Eye, Copy, Check, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@heroui/react';
 import PlatformChip from './PlatformChip.jsx';
 import { formatViewers } from '../lib/platforms.js';
 
-function MultiViewTile({ member, statuses, focused, onTileClick }) {
+function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggleMute, onTileClick }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
@@ -74,6 +74,13 @@ function MultiViewTile({ member, statuses, focused, onTileClick }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [member.key]);
 
+  // 전역 언뮤트 시 이미 멈춰버린 타일을 다시 재생시킨다
+  useEffect(() => {
+    if (muted || unmuteSignal === 0) return;
+    const video = videoRef.current;
+    if (video && video.paused) video.play().catch(() => {});
+  }, [unmuteSignal, muted]);
+
   const copyUrl = (e) => {
     e.stopPropagation();
     if (!freshUrl) return;
@@ -101,7 +108,7 @@ function MultiViewTile({ member, statuses, focused, onTileClick }) {
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
-        muted
+        muted={muted}
         playsInline
         autoPlay
       />
@@ -131,28 +138,82 @@ function MultiViewTile({ member, statuses, focused, onTileClick }) {
           <span className="text-[10px] text-zinc-200">{formatViewers(viewers)}</span>
         </div>
       )}
-      {/* M3U8 복사 */}
-      {freshUrl && (
+      {/* M3U8 복사 + 음소거 */}
+      <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
         <button
           type="button"
-          title="M3U8 URL 복사"
-          onClick={copyUrl}
-          className={`absolute bottom-2 right-2 p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
-            copied
-              ? 'bg-emerald-500/30 border-emerald-400/40 text-emerald-200'
-              : 'bg-black/60 border-white/10 text-zinc-300 hover:text-white hover:bg-black/80'
+          title={muted ? '이 방송 소리 켜기' : '이 방송 소리 끄기'}
+          onClick={(e) => {
+            e.stopPropagation();
+            // 브라우저 자동재생 정책상 언뮤트는 사용자 제스처 안에서 play()로 해야 한다
+            if (muted) {
+              const video = videoRef.current;
+              if (video) {
+                video.muted = false;
+                video.volume = 1;
+                video.play().catch(() => {});
+              }
+            }
+            onToggleMute(member.key);
+          }}
+          className={`p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
+            muted
+              ? 'bg-black/60 border-white/10 text-zinc-400 hover:text-white hover:bg-black/80'
+              : 'bg-white/20 border-white/30 text-white hover:bg-white/30'
           }`}
         >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
         </button>
-      )}
+        {freshUrl && (
+          <button
+            type="button"
+            title="M3U8 URL 복사"
+            onClick={copyUrl}
+            className={`p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
+              copied
+                ? 'bg-emerald-500/30 border-emerald-400/40 text-emerald-200'
+                : 'bg-black/60 border-white/10 text-zinc-300 hover:text-white hover:bg-black/80'
+            }`}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 export default function MultiViewPanel({ group, statuses, onClose }) {
   const [focusedKey, setFocusedKey] = useState(null);
+  // 여러 영상이 동시에 소리를 내면 서로 들리므로 기본은 전부 음소거한다.
+  // 켠 키만 기억하면 방송이 늦게 시작된 타일도 자동으로 음소거 상태를 유지한다.
+  const [unmutedKeys, setUnmutedKeys] = useState(() => new Set());
+  const [unmuteSignal, setUnmuteSignal] = useState(0);
   const liveMembers = group.members.filter((m) => statuses[m.key]?.is_live === true);
+
+  const toggleMute = (key) => {
+    setUnmutedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const allUnmuted = liveMembers.length > 0 && liveMembers.every((member) => unmutedKeys.has(member.key));
+
+  const toggleAllMute = () => {
+    if (allUnmuted) {
+      setUnmutedKeys(new Set());
+      return;
+    }
+    setUnmutedKeys(new Set(liveMembers.map((member) => member.key)));
+    // 브라우저 자동재생 정책상 언뮤트는 사용자 제스처 안에서 play()로 해야 소리가 난다
+    setUnmuteSignal((signal) => signal + 1);
+  };
 
   return (
     <div className="w-full flex flex-col gap-4 animate-fade-in">
@@ -170,6 +231,21 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
             방송 중 {liveMembers.length}개 · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
           </p>
         </div>
+        {liveMembers.length > 0 && (
+          <button
+            type="button"
+            onClick={toggleAllMute}
+            title={allUnmuted ? '전체 소리 끄기' : '전체 소리 켜기'}
+            className={`ml-auto h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              allUnmuted
+                ? 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                : 'bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            {allUnmuted ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            {allUnmuted ? '전체 소리 끄기' : '전체 소리 켜기'}
+          </button>
+        )}
       </div>
 
       {liveMembers.length === 0 ? (
@@ -185,6 +261,9 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
               member={member}
               statuses={statuses[member.key]}
               focused={focusedKey === member.key}
+              muted={!unmutedKeys.has(member.key)}
+              unmuteSignal={unmuteSignal}
+              onToggleMute={toggleMute}
               onTileClick={(key) => setFocusedKey((current) => (current === key ? null : key))}
             />
           ))}
