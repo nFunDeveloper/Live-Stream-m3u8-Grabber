@@ -1,9 +1,12 @@
+// 플랫폼 대표 색은 각 서비스의 브랜드 컬러를 참고했다
+// chzzk #00F889(치지직 그린), soop #00BEFF(SOOP 블루), cime #9048F0(ci.me 퍼플),
+// pandalive #FE695D(코랄 레드 계열), popkon #F0B400(팝콘TV 골드)
 export const PLATFORM_META = {
-  chzzk: { label: '치지직', dot: 'bg-violet-500', text: 'text-violet-300', border: 'border-violet-500/20', chip: 'bg-violet-500/10' },
-  soop: { label: 'SOOP', dot: 'bg-orange-500', text: 'text-orange-300', border: 'border-orange-500/20', chip: 'bg-orange-500/10' },
-  cime: { label: 'ci.me', dot: 'bg-cyan-400', text: 'text-cyan-300', border: 'border-cyan-400/20', chip: 'bg-cyan-400/10' },
-  pandalive: { label: '팬더라이브', dot: 'bg-rose-500', text: 'text-rose-300', border: 'border-rose-500/20', chip: 'bg-rose-500/10' },
-  popkon: { label: '팝콘TV', dot: 'bg-emerald-500', text: 'text-emerald-300', border: 'border-emerald-500/20', chip: 'bg-emerald-500/10' },
+  chzzk: { label: '치지직', dot: 'bg-[#00F889]', text: 'text-[#00F889]', border: 'border-[#00F889]/25', chip: 'bg-[#00F889]/10' },
+  soop: { label: 'SOOP', dot: 'bg-[#00BEFF]', text: 'text-[#00BEFF]', border: 'border-[#00BEFF]/25', chip: 'bg-[#00BEFF]/10' },
+  cime: { label: 'ci.me', dot: 'bg-[#9048F0]', text: 'text-[#A968FF]', border: 'border-[#9048F0]/30', chip: 'bg-[#9048F0]/15' },
+  pandalive: { label: '팬더라이브', dot: 'bg-[#FE695D]', text: 'text-[#FE695D]', border: 'border-[#FE695D]/25', chip: 'bg-[#FE695D]/10' },
+  popkon: { label: '팝콘TV', dot: 'bg-[#F0B400]', text: 'text-[#F0B400]', border: 'border-[#F0B400]/25', chip: 'bg-[#F0B400]/10' },
 };
 
 export function platformMeta(platform) {
