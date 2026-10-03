@@ -126,6 +126,38 @@ class Chzzk(PlatformDefault):
             "thumbnail": thumbnail.replace("{type}", "1080"),
         }
 
+    def search_lives(self, keyword, limit=8):
+        url = 'https://api.chzzk.naver.com/service/v1/search/lives'
+        response = requests.get(
+            url,
+            headers=self.headers,
+            params={'keyword': keyword, 'offset': 0, 'size': limit},
+            timeout=6,
+        )
+        response.raise_for_status()
+        data = response.json().get('content', {}).get('data') or []
+
+        results = []
+        for item in data:
+            live = item.get('live') or {}
+            channel = item.get('channel') or {}
+            channel_id = channel.get('channelId') or ''
+            if not channel_id:
+                continue
+            thumbnail = (live.get('liveImageUrl') or live.get('defaultThumbnailImageUrl') or '')
+            results.append({
+                'platform': 'chzzk',
+                'streamer_id': channel_id,
+                'streamer_name': channel.get('channelName') or '',
+                'title': live.get('liveTitle') or '',
+                'category': live.get('liveCategoryValue') or '',
+                'viewers': live.get('concurrentUserCount'),
+                'thumbnail': thumbnail.replace('{type}', '480'),
+                'started_at': live.get('openDate') or '',
+                'url': f'https://chzzk.naver.com/live/{channel_id}',
+            })
+        return results
+
     def __request_stream_info(self, chzzk_id, quality='540p'):
         url = f'https://api.chzzk.naver.com/service/v3.2/channels/{chzzk_id}/live-detail'
         headers = {**self.headers, "Referer": f"https://chzzk.naver.com/live/{chzzk_id}"}

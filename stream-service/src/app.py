@@ -1,5 +1,6 @@
 import os
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, redirect, request
 from urllib.parse import parse_qs, urlparse
 
@@ -110,6 +111,37 @@ def grab_api():
 
     logger.warning("[grab] unsupported hostname=%s", parsed_url.hostname)
     return {"error": "Unsupported platform or invalid URL"}, 400
+
+
+@app.route('/api/search', methods=['GET'])
+def search_api():
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return {"results": []}
+
+    # search_lives를 구현한 플랫폼만 병렬로 조회한다
+    searchable = [
+        (name, platform)
+        for name, platform in platforms.items()
+        if hasattr(platform, 'search_lives')
+    ]
+    logger.info("[search] query=%s platforms=%s", query, [name for name, _ in searchable])
+
+    def run_search(name, platform):
+        try:
+            return platform.search_lives(query, limit=8)
+        except Exception:
+            logger.exception("[search] platform=%s query=%s failed", name, query)
+            return []
+
+    results = []
+    with ThreadPoolExecutor(max_workers=max(len(searchable), 1)) as pool:
+        futures = [pool.submit(run_search, name, platform) for name, platform in searchable]
+        for future in as_completed(futures):
+            results.extend(future.result())
+
+    results.sort(key=lambda item: item.get('viewers') or 0, reverse=True)
+    return {"results": results}
 
 
 @app.route('/<path:platform_name>/<path:streamer_id>/<path:quality>', methods=['GET'])

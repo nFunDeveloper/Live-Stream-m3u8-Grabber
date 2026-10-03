@@ -84,6 +84,42 @@ class Cime(PlatformDefault):
         info["m3u8_url"] = variant_url or playback_url
         return info
 
+    def search_lives(self, keyword, limit=8):
+        url = 'https://ci.me/api/app/search'
+        headers = {**self.headers, 'Referer': 'https://ci.me/'}
+        response = requests.get(
+            url,
+            headers=headers,
+            params={'query': keyword, 'filter': 'LIVE'},
+            timeout=6,
+        )
+        response.raise_for_status()
+        sections = (response.json().get('data') or {}).get('sections') or []
+
+        results = []
+        for section in sections:
+            if section.get('type') != 'LIVE':
+                continue
+            for item in section.get('items') or []:
+                channel = item.get('channel') or {}
+                slug = channel.get('slug')
+                if not slug:
+                    continue
+                results.append({
+                    'platform': 'cime',
+                    'streamer_id': slug,
+                    'streamer_name': channel.get('name') or slug,
+                    'title': item.get('title') or '',
+                    'category': (item.get('category') or {}).get('name') or '',
+                    'viewers': item.get('curViewerCnt'),
+                    'thumbnail': item.get('imageUrl') or '',
+                    'started_at': item.get('openedAt') or '',
+                    'url': f'https://ci.me/@{slug}/live',
+                })
+                if len(results) >= limit:
+                    return results
+        return results
+
     def __request_live_info(self, channel_slug):
         url = f"https://ci.me/api/app/channels/{channel_slug}/live"
         headers = {**self.headers, "Referer": f"https://ci.me/@{channel_slug}/live"}

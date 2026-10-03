@@ -151,5 +151,45 @@ class DetectRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class SearchApiTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app_module.app.test_client()
+
+    def test_empty_query_returns_empty_results(self):
+        response = self.client.get("/api/search")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["results"], [])
+
+    def test_search_merges_results_from_searchable_platforms(self):
+        chzzk = Mock(spec=app_module.Chzzk)
+        chzzk.search_lives.return_value = [
+            {"platform": "chzzk", "url": "https://chzzk.naver.com/live/a", "viewers": 10}
+        ]
+        cime = Mock(spec=app_module.Cime)
+        cime.search_lives.return_value = [
+            {"platform": "cime", "url": "https://ci.me/@b/live", "viewers": 30}
+        ]
+        soop = Mock(spec=app_module.Soop)  # search_lives 미구현 플랫폼
+        with patch.dict(app_module.platforms, {"chzzk": chzzk, "cime": cime, "soop": soop}, clear=True):
+            response = self.client.get("/api/search?q=%EA%B2%8C%EC%9E%84")
+
+        self.assertEqual(response.status_code, 200)
+        results = response.get_json()["results"]
+        self.assertEqual(len(results), 2)
+        # 시청자 수 내림차순 정렬
+        self.assertEqual(results[0]["platform"], "cime")
+        chzzk.search_lives.assert_called_once()
+        self.assertFalse(hasattr(soop, "search_lives"))  # 미구현 플랫폼은 검색 대상 아님
+
+    def test_search_swallows_platform_failure(self):
+        chzzk = Mock(spec=app_module.Chzzk)
+        chzzk.search_lives.side_effect = RuntimeError("api down")
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True):
+            response = self.client.get("/api/search?q=game")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["results"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
