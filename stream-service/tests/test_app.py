@@ -191,5 +191,37 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()["results"], [])
 
 
+class StatusApiTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app_module.app.test_client()
+
+    def test_returns_live_status_per_entry(self):
+        chzzk = Mock(spec=app_module.Chzzk)
+        chzzk.check_status.return_value = {"is_live": True, "viewers": 4282, "title": "방송"}
+        soop = Mock(spec=app_module.Soop)  # check_status 미구현
+        with patch.dict(app_module.platforms, {"chzzk": chzzk, "soop": soop}, clear=True):
+            response = self.client.post("/api/status", json={
+                "entries": [
+                    {"platform": "chzzk", "streamer_id": "abc"},
+                    {"platform": "chzzk", "streamer_id": "abc"},  # 중복은 한 번만 조회
+                    {"platform": "soop", "streamer_id": "xyz"},
+                ]
+            })
+
+        self.assertEqual(response.status_code, 200)
+        statuses = response.get_json()["statuses"]
+        self.assertEqual(len(statuses), 2)
+        by_id = {s["streamer_id"]: s for s in statuses}
+        self.assertTrue(by_id["abc"]["is_live"])
+        self.assertEqual(by_id["abc"]["viewers"], 4282)
+        self.assertIsNone(by_id["xyz"]["is_live"])
+        chzzk.check_status.assert_called_once_with("abc")
+
+    def test_empty_entries_returns_empty(self):
+        response = self.client.post("/api/status", json={"entries": []})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["statuses"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

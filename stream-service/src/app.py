@@ -144,6 +144,36 @@ def search_api():
     return {"results": results}
 
 
+@app.route('/api/status', methods=['POST'])
+def status_api():
+    body = request.get_json(silent=True) or {}
+    entries = [
+        (entry.get('platform') or '', entry.get('streamer_id') or '')
+        for entry in (body.get('entries') or [])
+        if entry.get('platform') and entry.get('streamer_id')
+    ]
+    entries = list(dict.fromkeys(entries))  # 중복 제거
+
+    def run_check(platform_name, streamer_id):
+        platform = platforms.get(platform_name)
+        if platform is None or not hasattr(platform, 'check_status'):
+            return {'platform': platform_name, 'streamer_id': streamer_id, 'is_live': None}
+        try:
+            status = platform.check_status(streamer_id)
+            return {'platform': platform_name, 'streamer_id': streamer_id, **status}
+        except Exception:
+            logger.exception("[status] check failed platform=%s streamer=%s", platform_name, streamer_id)
+            return {'platform': platform_name, 'streamer_id': streamer_id, 'is_live': None}
+
+    statuses = []
+    with ThreadPoolExecutor(max_workers=min(max(len(entries), 1), 8)) as pool:
+        futures = [pool.submit(run_check, platform_name, streamer_id) for platform_name, streamer_id in entries]
+        for future in as_completed(futures):
+            statuses.append(future.result())
+
+    return {"statuses": statuses}
+
+
 @app.route('/<path:platform_name>/<path:streamer_id>/<path:quality>', methods=['GET'])
 def get_live(platform_name, streamer_id, quality='540p'):
     try:

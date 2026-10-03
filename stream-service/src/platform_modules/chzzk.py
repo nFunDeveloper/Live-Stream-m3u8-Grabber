@@ -127,6 +127,15 @@ class Chzzk(PlatformDefault):
             "thumbnail": thumbnail.replace("{type}", "1080"),
         }
 
+    def check_status(self, streamer_id):
+        content = self.__fetch_live_detail(streamer_id)
+        is_live = content.get('status') == 'OPEN'
+        return {
+            'is_live': is_live,
+            'viewers': content.get('concurrentUserCount') if is_live else None,
+            'title': (content.get('liveTitle') or '') if is_live else '',
+        }
+
     def search_lives(self, keyword, limit=8):
         # 1) 라이브 제목 검색
         results = self.__search_live_titles(keyword, limit)

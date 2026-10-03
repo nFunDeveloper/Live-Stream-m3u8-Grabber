@@ -84,6 +84,16 @@ class Cime(PlatformDefault):
         info["m3u8_url"] = variant_url or playback_url
         return info
 
+    def check_status(self, channel_slug):
+        live_info = self.__request_live_info(channel_slug.lstrip('@'))
+        data = live_info.get('data') or {}
+        is_live = data.get('state') == 'ACTIVE'
+        return {
+            'is_live': is_live,
+            'viewers': data.get('curViewerCnt') if is_live else None,
+            'title': (data.get('title') or '') if is_live else '',
+        }
+
     def search_lives(self, keyword, limit=8):
         url = 'https://ci.me/api/app/search'
         headers = {**self.headers, 'Referer': 'https://ci.me/'}
