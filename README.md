@@ -2,6 +2,14 @@
 
 한국 라이브 스트리밍 플랫폼의 M3U8 스트림 URL을 추출하고, 내장 HLS 플레이어에서 바로 확인할 수 있는 웹 서비스입니다.
 
+## 주요 기능
+
+- **원클릭 추출**: 방송 URL 입력 시 M3U8 주소와 방송 정보(제목, 스트리머명, 카테고리, 시작 시각, 시청자 수)를 함께 추출
+- **내장 플레이어**: hls.js 기반 즉시 재생, CORS 차단 시 M3U8 복사로 폴백
+- **검색 히스토리**: 사이드바에 플랫폼별로 누적, 클릭하면 즉시 재조회
+- **그룹**: 자주 보는 방송인을 그룹으로 묶어 클릭 한 번에 재조회
+- 히스토리·그룹은 **브라우저(localStorage)에만 저장**되며 서버에는 기록되지 않습니다.
+
 ## 지원 플랫폼
 
 | 플랫폼 | 도메인 패턴 |
@@ -25,19 +33,23 @@ LiveStreamM3U8Grabber/
 │   ├── nginx.dev.conf               # 개발 nginx 설정
 │   └── Dockerfile.dev               # 개발용 nginx 이미지
 ├── stream-service/
-│   ├── Dockerfile.backend           # Flask API 전용 (Python만, Node.js 없음)
+│   ├── Dockerfile.backend           # Flask API 전용 (gunicorn, Node.js 없음)
 │   ├── Dockerfile.nginx             # 프로덕션 nginx (빌드된 dist/ COPY)
 │   ├── requirements.txt
+│   ├── tests/                       # 단위 테스트 (python -m unittest discover -s tests)
 │   └── src/
 │       ├── app.py                   # Flask API 서버
-│       ├── platform_modules/        # 플랫폼별 M3U8 추출 모듈
+│       ├── platform_modules/        # 플랫폼별 M3U8/메타데이터 추출 모듈
 │       │   ├── chzzk.py
 │       │   ├── soop.py
 │       │   ├── cime.py
 │       │   ├── pandalive.py
 │       │   └── popkon.py
 │       └── ui/                      # React 프론트엔드
-│           ├── src/                 # 소스코드
+│           ├── src/
+│           │   ├── App.jsx          # 레이아웃 & 추출 플로우
+│           │   ├── components/      # Sidebar(히스토리/그룹), PlayerPanel
+│           │   └── lib/             # localStorage 저장소, 플랫폼 메타
 │           ├── dist/                # 빌드 결과물 (레포에 포함)
 │           ├── vite.config.js
 │           └── package.json
@@ -167,9 +179,17 @@ M3U8 스트림 URL을 추출합니다.
   "m3u8_url": "https://...",
   "platform": "chzzk",
   "streamer_id": "channel_id",
-  "quality": "auto"
+  "quality": "auto",
+  "title": "방송 제목",
+  "streamer_name": "채널명",
+  "category": "게임/카테고리",
+  "started_at": "2026-10-03 08:09:20",
+  "viewers": 10240,
+  "thumbnail": "https://..."
 }
 ```
+
+> 메타데이터 필드는 플랫폼별로 제공 범위가 다를 수 있습니다.
 
 ### GET `/<platform>/<streamer_id>/<quality>`
 
