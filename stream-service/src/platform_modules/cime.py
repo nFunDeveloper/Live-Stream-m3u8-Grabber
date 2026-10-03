@@ -1,5 +1,4 @@
 import logging
-from urllib.parse import urljoin
 
 import requests
 
@@ -62,7 +61,12 @@ class Cime(PlatformDefault):
         if normalized_quality == "auto":
             return playback_url
 
-        variant_url = self.__get_variant_url_from_master(playback_url, normalized_quality)
+        headers = {
+            **self.headers,
+            "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+            "Origin": "https://ci.me",
+        }
+        variant_url = self.get_variant_url_from_master(playback_url, normalized_quality, headers)
         return variant_url or playback_url
 
     def __request_live_info(self, channel_slug):
@@ -71,50 +75,3 @@ class Cime(PlatformDefault):
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
-
-    def __get_variant_url_from_master(self, master_m3u8_url, quality):
-        headers = {
-            **self.headers,
-            "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
-            "Origin": "https://ci.me",
-        }
-        response = requests.get(master_m3u8_url, headers=headers, timeout=10)
-        logger.info(
-            "[cime] master playlist response url=%s status_code=%s",
-            master_m3u8_url,
-            response.status_code,
-        )
-        response.raise_for_status()
-
-        lines = [
-            line.strip()
-            for line in response.text.splitlines()
-            if line.strip() and not line.startswith("#EXTM3U")
-        ]
-        for index, line in enumerate(lines):
-            if not line.startswith("#EXT-X-STREAM-INF"):
-                continue
-
-            variant_path = lines[index + 1] if index + 1 < len(lines) else ""
-            if not variant_path or variant_path.startswith("#"):
-                continue
-
-            if quality == "auto" or self.__stream_info_matches_quality(line, quality):
-                variant_url = urljoin(master_m3u8_url, variant_path)
-                logger.info(
-                    "[cime] selected variant quality=%s stream_info=%s variant_url=%s",
-                    quality,
-                    line,
-                    variant_url,
-                )
-                return variant_url
-
-        logger.warning("[cime] playlist variant not found quality=%s", quality)
-        return ""
-
-    def __stream_info_matches_quality(self, stream_info, quality):
-        return (
-            f'NAME="{quality}' in stream_info
-            or f'VIDEO="{quality}' in stream_info
-            or f"x{quality.removesuffix('p')}" in stream_info
-        )

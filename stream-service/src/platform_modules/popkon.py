@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urljoin
 
 import requests
 
@@ -90,7 +89,7 @@ class Popkon(PlatformDefault):
         if normalized_quality == "auto":
             return playlist_url
 
-        variant_url = self.__get_variant_url_from_master(playlist_url, normalized_quality)
+        variant_url = self.get_variant_url_from_master(playlist_url, normalized_quality, self.playlist_headers)
         return variant_url or playlist_url
 
     def __parse_stream_key(self, stream_key):
@@ -167,42 +166,3 @@ class Popkon(PlatformDefault):
             response.raise_for_status()
 
         return body
-
-    def __get_variant_url_from_master(self, master_m3u8_url, quality):
-        response = self.session.get(master_m3u8_url, headers=self.playlist_headers, timeout=10)
-        logger.info(
-            "[popkon] master playlist response url=%s status_code=%s",
-            master_m3u8_url,
-            response.status_code,
-        )
-        response.raise_for_status()
-
-        lines = [
-            line.strip()
-            for line in response.text.splitlines()
-            if line.strip() and not line.startswith("#EXTM3U")
-        ]
-        for index, line in enumerate(lines):
-            if not line.startswith("#EXT-X-STREAM-INF"):
-                continue
-
-            variant_path = lines[index + 1] if index + 1 < len(lines) else ""
-            if not variant_path or variant_path.startswith("#"):
-                continue
-
-            if self.__stream_info_matches_quality(line, quality):
-                variant_url = urljoin(master_m3u8_url, variant_path)
-                logger.info(
-                    "[popkon] selected variant quality=%s stream_info=%s variant_url=%s",
-                    quality,
-                    line,
-                    variant_url,
-                )
-                return variant_url
-
-        logger.warning("[popkon] playlist variant not found quality=%s", quality)
-        return ""
-
-    def __stream_info_matches_quality(self, stream_info, quality):
-        height = quality.removesuffix("p")
-        return f'NAME="{quality}' in stream_info or f"x{height}" in stream_info

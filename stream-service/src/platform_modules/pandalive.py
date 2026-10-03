@@ -1,5 +1,4 @@
 import logging
-from urllib.parse import urljoin
 
 import requests
 
@@ -82,7 +81,11 @@ class Pandalive(PlatformDefault):
         if normalized_quality == "auto":
             return playlist_url
 
-        variant_url = self.__get_variant_url_from_master(playlist_url, normalized_quality)
+        headers = {
+            **self.headers,
+            "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+        }
+        variant_url = self.get_variant_url_from_master(playlist_url, normalized_quality, headers)
         return variant_url or playlist_url
 
     def __request_live_info(self, user_id):
@@ -135,46 +138,3 @@ class Pandalive(PlatformDefault):
         name = str(candidate.get("name", "")).lower()
         height = quality.removesuffix("p")
         return quality.lower() in name or height in name
-
-    def __get_variant_url_from_master(self, master_m3u8_url, quality):
-        headers = {
-            **self.headers,
-            "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
-        }
-        response = self.session.get(master_m3u8_url, headers=headers, timeout=10)
-        logger.info(
-            "[pandalive] master playlist response url=%s status_code=%s",
-            master_m3u8_url,
-            response.status_code,
-        )
-        response.raise_for_status()
-
-        lines = [
-            line.strip()
-            for line in response.text.splitlines()
-            if line.strip() and not line.startswith("#EXTM3U")
-        ]
-        for index, line in enumerate(lines):
-            if not line.startswith("#EXT-X-STREAM-INF"):
-                continue
-
-            variant_path = lines[index + 1] if index + 1 < len(lines) else ""
-            if not variant_path or variant_path.startswith("#"):
-                continue
-
-            if self.__stream_info_matches_quality(line, quality):
-                variant_url = urljoin(master_m3u8_url, variant_path)
-                logger.info(
-                    "[pandalive] selected variant quality=%s stream_info=%s variant_url=%s",
-                    quality,
-                    line,
-                    variant_url,
-                )
-                return variant_url
-
-        logger.warning("[pandalive] playlist variant not found quality=%s", quality)
-        return ""
-
-    def __stream_info_matches_quality(self, stream_info, quality):
-        height = quality.removesuffix("p")
-        return f'NAME="{quality}' in stream_info or f"x{height}" in stream_info
