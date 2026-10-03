@@ -81,6 +81,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
     e.dataTransfer.setData('application/json', JSON.stringify(entry));
   };
 
+  const offline = statuses[entry.key]?.is_live === false;
   const secondary = [
     formatDateTime(entry.searchedAt),
     entry.quality ? entry.quality : null,
@@ -90,14 +91,18 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      title="드래그하여 그룹에 추가"
-      onClick={() => onPick(entry)}
-      className="group/item flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing hover:bg-white/[0.05] transition-colors min-w-0"
+      title={offline ? '방송 중이 아닙니다' : '드래그하여 그룹에 추가'}
+      onClick={() => !offline && onPick(entry)}
+      className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
+        offline
+          ? 'opacity-50 cursor-not-allowed'
+          : 'cursor-grab active:cursor-grabbing hover:bg-white/[0.05]'
+      }`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <PlatformChip platform={entry.platform} size="xs" />
-          <span className="text-xs font-medium text-zinc-200 truncate group-hover/item:text-white">
+          <span className={`text-xs font-medium truncate ${offline ? 'text-zinc-500' : 'text-zinc-200 group-hover/item:text-white'}`}>
             {entry.streamer_name || entry.streamer_id}
           </span>
           <LiveDot statusKey={entry.key} statuses={statuses} />
@@ -174,35 +179,43 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
               히스토리 항목을 이 그룹으로 드래그해 저장하세요
             </div>
           )}
-          {group.members.map((member) => (
-            <div
-              key={member.key}
-              role="button"
-              tabIndex={0}
-              onClick={() => onPick(member)}
-              onKeyDown={(e) => e.key === 'Enter' && onPick(member)}
-              className="group/m flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-white/[0.05] transition-colors min-w-0"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <PlatformChip platform={member.platform} size="xs" />
-                  <span className="text-xs font-medium text-zinc-200 truncate">
-                    {member.streamer_name || member.streamer_id}
-                  </span>
-                  <LiveDot statusKey={member.key} statuses={statuses} />
+          {group.members.map((member) => {
+            const offline = statuses[member.key]?.is_live === false;
+            return (
+              <div
+                key={member.key}
+                role="button"
+                tabIndex={0}
+                onClick={() => !offline && onPick(member)}
+                onKeyDown={(e) => e.key === 'Enter' && !offline && onPick(member)}
+                title={offline ? '방송 중이 아닙니다' : undefined}
+                className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
+                  offline
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'cursor-pointer hover:bg-white/[0.05]'
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <PlatformChip platform={member.platform} size="xs" />
+                    <span className={`text-xs font-medium truncate ${offline ? 'text-zinc-500' : 'text-zinc-200'}`}>
+                      {member.streamer_name || member.streamer_id}
+                    </span>
+                    <LiveDot statusKey={member.key} statuses={statuses} />
+                  </div>
+                  <div className="text-[10px] text-zinc-500 truncate pl-0.5">
+                    {member.title || '제목 정보 없음'}{member.quality ? ` · ${member.quality}` : ''}
+                  </div>
                 </div>
-                <div className="text-[10px] text-zinc-500 truncate pl-0.5">
-                  {member.title || '제목 정보 없음'}{member.quality ? ` · ${member.quality}` : ''}
+                <div className="hidden group-hover/m:flex items-center gap-0.5 shrink-0">
+                  <CopyM3u8Button onClick={() => onCopyM3u8(member)} />
+                  <IconButton danger title="그룹에서 제거" onClick={() => onDeleteMember(group, member)}>
+                    <X className="w-3 h-3" />
+                  </IconButton>
                 </div>
               </div>
-              <div className="hidden group-hover/m:flex items-center gap-0.5 shrink-0">
-                <CopyM3u8Button onClick={() => onCopyM3u8(member)} />
-                <IconButton danger title="그룹에서 제거" onClick={() => onDeleteMember(group, member)}>
-                  <X className="w-3 h-3" />
-                </IconButton>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
