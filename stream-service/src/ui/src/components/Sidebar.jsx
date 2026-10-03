@@ -11,7 +11,23 @@ import {
   Radio,
 } from 'lucide-react';
 import PlatformChip from './PlatformChip.jsx';
-import { formatDateTime } from '../lib/platforms.js';
+import { formatDateTime, formatViewers } from '../lib/platforms.js';
+
+function LiveDot({ statusKey, statuses }) {
+  const status = statuses[statusKey];
+  if (!status || status.is_live === null || status.is_live === undefined) return null;
+  const title = status.is_live
+    ? `방송 중${formatViewers(status.viewers) ? ` (${formatViewers(status.viewers)}명)` : ''}`
+    : '오프라인';
+  return (
+    <span
+      title={title}
+      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+        status.is_live ? 'bg-red-500 animate-pulse' : 'bg-zinc-700'
+      }`}
+    />
+  );
+}
 
 function SectionHeader({ icon: Icon, title, actions }) {
   return (
@@ -58,12 +74,17 @@ function CopyM3u8Button({ onClick }) {
   );
 }
 
-function HistoryItem({ entry, onPick, onDelete, onCopyM3u8 }) {
+function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   // 히스토리 항목을 사이드바 그룹으로 드래그할 수 있도록 페이로드 실기
   const handleDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'copy';
     e.dataTransfer.setData('application/json', JSON.stringify(entry));
   };
+
+  const secondary = [
+    formatDateTime(entry.searchedAt),
+    entry.quality ? entry.quality : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div
@@ -79,9 +100,10 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8 }) {
           <span className="text-xs font-medium text-zinc-200 truncate group-hover/item:text-white">
             {entry.streamer_name || entry.streamer_id}
           </span>
+          <LiveDot statusKey={entry.key} statuses={statuses} />
         </div>
         <div className="text-[10px] text-zinc-500 truncate pl-0.5">
-          {formatDateTime(entry.searchedAt)}
+          {secondary}
         </div>
       </div>
       <div className="hidden group-hover/item:flex items-center gap-0.5 shrink-0">
@@ -94,7 +116,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8 }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMember, onDropMember, onCopyM3u8 }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
   const [dragOver, setDragOver] = useState(false);
 
   const handleDragOver = (e) => {
@@ -167,9 +189,10 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
                   <span className="text-xs font-medium text-zinc-200 truncate">
                     {member.streamer_name || member.streamer_id}
                   </span>
+                  <LiveDot statusKey={member.key} statuses={statuses} />
                 </div>
                 <div className="text-[10px] text-zinc-500 truncate pl-0.5">
-                  {member.title || '제목 정보 없음'}
+                  {member.title || '제목 정보 없음'}{member.quality ? ` · ${member.quality}` : ''}
                 </div>
               </div>
               <div className="hidden group-hover/m:flex items-center gap-0.5 shrink-0">
@@ -189,6 +212,7 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
 export default function Sidebar({
   history,
   groups,
+  statuses = {},
   onPickHistory,
   onDeleteHistory,
   onClearHistory,
@@ -282,6 +306,7 @@ export default function Sidebar({
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}
+                  statuses={statuses}
                 />
               ))}
             </div>
@@ -314,6 +339,7 @@ export default function Sidebar({
                   onPick={onPickHistory}
                   onDelete={onDeleteHistory}
                   onCopyM3u8={onCopyM3u8}
+                  statuses={statuses}
                 />
               ))}
             </div>

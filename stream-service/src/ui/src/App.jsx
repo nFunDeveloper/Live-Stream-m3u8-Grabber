@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Button, Alert } from '@heroui/react';
 import {
   Link2,
@@ -83,6 +83,7 @@ function App() {
   const [toastMessage, setToastMessage] = useState('');
   const [history, setHistory] = useState(() => loadHistory());
   const [groups, setGroups] = useState(() => loadGroups());
+  const [statuses, setStatuses] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const toastTimerRef = useRef(null);
@@ -201,9 +202,61 @@ function App() {
       .catch(() => showToast('클립보드 복사에 실패했습니다'));
   };
 
+  // 사이드바에 보이는 스트리머들의 방송 중 여부를 60초마다 확인
+  const statusEntries = useMemo(() => {
+    const map = new Map();
+    for (const entry of history) {
+      map.set(entry.key, { platform: entry.platform, streamer_id: entry.streamer_id });
+    }
+    for (const group of groups) {
+      for (const member of group.members) {
+        map.set(member.key, { platform: member.platform, streamer_id: member.streamer_id });
+      }
+    }
+    return Array.from(map.entries()).map(([key, value]) => ({ key, ...value }));
+  }, [history, groups]);
+
+  const statusSignature = statusEntries.map((entry) => entry.key).join(',');
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      if (statusEntries.length === 0) {
+        setStatuses({});
+        return;
+      }
+      try {
+        const response = await fetch('/api/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entries: statusEntries.map(({ platform, streamer_id }) => ({ platform, streamer_id })),
+          }),
+        });
+        const data = await response.json();
+        if (cancelled) return;
+        const next = {};
+        for (const status of data.statuses || []) {
+          next[`${status.platform}:${status.streamer_id}`] = status;
+        }
+        setStatuses(next);
+      } catch {
+        // 상태 조회 실패는 조용히 무시
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusSignature]);
+
   const sidebarProps = {
     history,
     groups,
+    statuses,
     onPickHistory: (entry) => handleGrab(null, entry.url),
     onDeleteHistory: deleteHistoryEntry,
     onClearHistory: clearAllHistory,
@@ -240,28 +293,29 @@ function App() {
 
       {/* 메인 영역 */}
       <main className="relative z-10 flex-1 min-w-0 overflow-y-auto flex flex-col items-center">
-        <header className="sticky top-0 z-20 w-full h-14 px-4 flex items-center gap-3 border-b border-white/5 bg-[#0A0A0C]/70 backdrop-blur-xl">
+        <header className="sticky top-0 z-30 w-full h-14 px-4 flex items-center gap-3 border-b border-white/5 bg-[#050505]/80 backdrop-blur-xl">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
-            className="md:hidden p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="md:hidden p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
             title="메뉴"
           >
             <Menu className="w-5 h-5" />
           </button>
-          <h1 className="text-lg font-extrabold tracking-tight">
+          <h1 className="text-lg font-extrabold tracking-tight shrink-0">
             <span className="text-gradient">M3U8 Grabber</span>
           </h1>
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-white/15 bg-white/5 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">
+          <span className="hidden lg:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-white/15 bg-white/5 text-[9px] font-semibold uppercase tracking-wider text-zinc-400 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
             Live Stream Toolkit
           </span>
+          {/* 실시간 방송 검색 */}
+          <div className="flex-1 min-w-0 max-w-xl ml-auto">
+            <SearchBar onPick={(item) => handleGrab(null, item.url)} />
+          </div>
         </header>
 
         <div className="w-full max-w-3xl px-4 py-6 flex flex-col gap-5 my-auto">
-          {/* 실시간 방송 검색 */}
-          <SearchBar onPick={(item) => handleGrab(null, item.url)} />
-
           {/* 입력 폼 */}
           <form
             onSubmit={handleGrab}

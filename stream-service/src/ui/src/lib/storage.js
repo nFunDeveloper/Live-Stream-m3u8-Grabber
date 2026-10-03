@@ -41,6 +41,7 @@ export function recordHistory(result, url) {
     thumbnail: result.thumbnail || '',
     url: url || '',
     m3u8: result.m3u8_url || '',
+    quality: result.quality || '',
     searchedAt: Date.now(),
   };
   const history = [entry, ...rest].slice(0, HISTORY_LIMIT);
@@ -78,5 +79,6 @@ export function buildGroupMember(result) {
     title: result.title || '',
     url: result.url || '',
     m3u8: result.m3u8 || result.m3u8_url || '',
+    quality: result.quality || '',
   };
 }
