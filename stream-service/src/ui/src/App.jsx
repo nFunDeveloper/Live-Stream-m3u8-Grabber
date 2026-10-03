@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import Sidebar from './components/Sidebar.jsx';
 import PlayerPanel from './components/PlayerPanel.jsx';
+import SearchBar from './components/SearchBar.jsx';
 import {
   loadHistory,
   recordHistory,
@@ -46,7 +47,7 @@ function EmptyState() {
             {index > 0 && <div className="w-8 border-t border-white/10" />}
             <div className="flex flex-col items-center gap-2">
               <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center">
-                <Icon className="w-4 h-4 text-purple-300" />
+                <Icon className="w-4 h-4 text-zinc-300" />
               </div>
               <span className="text-[10px] sm:text-xs text-zinc-400 font-medium">{label}</span>
             </div>
@@ -216,12 +217,8 @@ function App() {
 
   return (
     <div className="relative h-screen flex overflow-hidden font-sans select-none">
-      {/* 오로라 배경 */}
-      <div className="aurora-bg">
-        <div className="aurora-blob blob-1"></div>
-        <div className="aurora-blob blob-2"></div>
-        <div className="aurora-blob blob-3"></div>
-      </div>
+      {/* Astra 스타일 도트 그리드 배경 */}
+      <div className="dot-grid" />
 
       {/* 데스크톱 사이드바 */}
       <aside className="hidden md:flex w-72 shrink-0 relative z-10 border-r border-white/5 bg-black/30 backdrop-blur-xl">
@@ -255,13 +252,16 @@ function App() {
           <h1 className="text-lg font-extrabold tracking-tight">
             <span className="text-gradient">M3U8 Grabber</span>
           </h1>
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-purple-500/20 bg-purple-500/5 text-[9px] font-semibold uppercase tracking-wider text-purple-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-white/15 bg-white/5 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
             Live Stream Toolkit
           </span>
         </header>
 
         <div className="w-full max-w-3xl px-4 py-6 flex flex-col gap-5 my-auto">
+          {/* 실시간 방송 검색 */}
+          <SearchBar onPick={(item) => handleGrab(null, item.url)} />
+
           {/* 입력 폼 */}
           <form
             onSubmit={handleGrab}
@@ -305,7 +305,7 @@ function App() {
             <Button
               type="submit"
               isLoading={loading}
-              className="w-full sm:w-auto h-10 px-6 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-purple-500/20 hover:shadow-purple-500/35 transition-all shrink-0"
+              className="w-full sm:w-auto h-10 px-6 rounded-lg bg-white hover:bg-zinc-200 text-black font-semibold text-sm shadow-lg shadow-white/10 transition-all shrink-0"
             >
               {loading ? '추출 중' : '추출하기'}
             </Button>
@@ -340,8 +340,8 @@ function App() {
       {/* 토스트 */}
       {toastMessage && (
         <div className="pointer-events-none fixed inset-x-0 bottom-8 z-50 flex justify-center px-4">
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-2xl backdrop-blur-xl">
-            <Check className="h-4 w-4 text-emerald-300" />
+          <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white shadow-2xl backdrop-blur-xl">
+            <Check className="h-4 w-4 text-white" />
             <span>{toastMessage}</span>
           </div>
         </div>

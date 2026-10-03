@@ -17,3 +17,11 @@ export function formatViewers(viewers) {
   if (viewers === null || viewers === undefined || viewers === '') return null;
   return Number(viewers).toLocaleString('ko-KR');
 }
+
+export function formatDateTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

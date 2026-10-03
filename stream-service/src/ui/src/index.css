@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-[#0A0A0C] text-[#ECEDEE] font-sans antialiased overflow-x-hidden select-none;
+    @apply bg-[#050505] text-[#ECEDEE] font-sans antialiased overflow-x-hidden select-none;
   }
 
   input,
@@ -13,15 +13,14 @@
   }
 }
 
-/* 2026 프리미엄 글래스모피즘 & 글로우 효과 */
 .glass-panel {
-  background: rgba(18, 18, 22, 0.65);
+  background: rgba(10, 10, 12, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 
-    0 4px 30px rgba(0, 0, 0, 0.4),
-    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  box-shadow:
+    0 4px 30px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.04);
 }
 
 .glass-input {
@@ -32,90 +31,28 @@
 }
 
 .glass-input:focus-within {
-  border-color: rgba(168, 85, 247, 0.6) !important;
-  box-shadow: 0 0 15px rgba(168, 85, 247, 0.15);
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.07);
 }
 
-/* 움직이는 네온 배경 */
-.aurora-bg {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 100vw;
-  height: 100vh;
+/* Astra 스타일: 검정 배경 + 흰색 도트 그리드 (상단에서 아래로 흐려짐) */
+.dot-grid {
+  position: fixed;
+  inset: 0;
   z-index: 0;
-  overflow: hidden;
   pointer-events: none;
-  filter: blur(100px);
-  opacity: 0.4;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 100% 90% at 50% 0%, black 35%, transparent 100%);
+  mask-image: radial-gradient(ellipse 100% 90% at 50% 0%, black 35%, transparent 100%);
 }
 
-.aurora-blob {
-  position: absolute;
-  border-radius: 50%;
-  mix-blend-mode: screen;
-  animation: float 20s infinite alternate;
-}
-
-.blob-1 {
-  top: -10%;
-  left: -10%;
-  width: 50vw;
-  height: 50vw;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.3) 0%, rgba(0,0,0,0) 70%);
-}
-
-.blob-2 {
-  bottom: -10%;
-  right: -10%;
-  width: 60vw;
-  height: 60vw;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.25) 0%, rgba(0,0,0,0) 70%);
-  animation-delay: -5s;
-  animation-duration: 25s;
-}
-
-.blob-3 {
-  top: 40%;
-  left: 30%;
-  width: 40vw;
-  height: 40vw;
-  background: radial-gradient(circle, rgba(236, 72, 153, 0.15) 0%, rgba(0,0,0,0) 70%);
-  animation-delay: -10s;
-  animation-duration: 18s;
-}
-
-@keyframes float {
-  0% {
-    transform: translate(0, 0) scale(1) rotate(0deg);
-  }
-  50% {
-    transform: translate(5vw, 5vh) scale(1.1) rotate(180deg);
-  }
-  100% {
-    transform: translate(-5vw, -5vh) scale(0.9) rotate(360deg);
-  }
-}
-
-/* 텍스트 그라데이션 애니메이션 */
+/* 텍스트 그라데이션: 흰색 톤 */
 .text-gradient {
-  background: linear-gradient(
-    135deg,
-    #ffffff 0%,
-    #a855f7 50%,
-    #3b82f6 100%
-  );
-  background-size: 200% auto;
+  background: linear-gradient(135deg, #ffffff 0%, #e4e4e7 55%, #a1a1aa 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shine 6s linear infinite;
-}
-
-@keyframes shine {
-  to {
-    background-position: 200% center;
-  }
 }
 
 /* 페이드 인 */

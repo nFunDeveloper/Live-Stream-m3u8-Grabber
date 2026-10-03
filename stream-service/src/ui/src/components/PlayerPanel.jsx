@@ -7,7 +7,6 @@ import {
   CalendarClock,
   Eye,
   Maximize2,
-  GripVertical,
 } from 'lucide-react';
 import { Tooltip, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { platformMeta, formatViewers } from '../lib/platforms.js';
@@ -116,22 +115,6 @@ export default function PlayerPanel({ result, showToast }) {
       });
   };
 
-  // 정보 카드를 사이드바 그룹으로 드래그할 수 있도록 페이로드 실기
-  const handleDragStart = (e) => {
-    e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData(
-      'application/json',
-      JSON.stringify({
-        platform: result.platform,
-        streamer_id: result.streamer_id,
-        streamer_name: result.streamer_name || '',
-        title: result.title || '',
-        url: result.url || '',
-        m3u8: m3u8Url,
-      }),
-    );
-  };
-
   return (
     <div className="flex flex-col gap-3 animate-fade-in w-full">
       {/* 16:9 플레이어 */}
@@ -162,15 +145,8 @@ export default function PlayerPanel({ result, showToast }) {
         )}
       </div>
 
-      {/* 방송 정보 영역 (사이드바 그룹으로 드래그 가능) */}
-      <div
-        data-testid="stream-card"
-        draggable
-        onDragStart={handleDragStart}
-        title="이 카드를 사이드바 그룹으로 드래그하면 저장됩니다"
-        className="flex items-start sm:items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.02] cursor-grab active:cursor-grabbing hover:border-white/20 transition-colors"
-      >
-        <GripVertical className="w-4 h-4 text-zinc-600 shrink-0 hidden sm:block" />
+      {/* 방송 정보 영역 */}
+      <div className="flex items-start sm:items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.02]">
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
@@ -187,7 +163,7 @@ export default function PlayerPanel({ result, showToast }) {
               {result.streamer_name || result.streamer_id}
             </MetadataChip>
             {result.category && (
-              <MetadataChip className="bg-purple-500/10 border-purple-500/20 text-purple-300">
+              <MetadataChip className="bg-white/5 border-white/10 text-zinc-400">
                 {result.category}
               </MetadataChip>
             )}
@@ -265,7 +241,7 @@ export default function PlayerPanel({ result, showToast }) {
               onClick={() => {
                 copyToClipboard();
               }}
-              className="rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white font-semibold"
+              className="rounded-lg bg-white hover:bg-zinc-200 text-black font-semibold"
             >
               {copied ? '복사 완료!' : 'URL 복사'}
             </Button>
