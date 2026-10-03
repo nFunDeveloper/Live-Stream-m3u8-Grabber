@@ -92,9 +92,9 @@ def grab_api():
                 "streamer_id": streamer_id,
                 "quality": quality
             }
-        except ValueError:
-            logger.exception("[grab] unsupported quality quality=%s", quality)
-            return {"error": f"Requested quality '{quality}' is not supported by this stream"}, 400
+        except ValueError as e:
+            logger.warning("[grab] invalid request: %s", e)
+            return {"error": str(e)}, 400
         except PermissionError as e:
             logger.warning("[grab] stream access denied: %s", e)
             return {"error": str(e)}, 403
@@ -112,6 +112,22 @@ def get_live(platform_name, streamer_id, quality='540p'):
     except PermissionError as e:
         logger.warning("[get_live] stream access denied: %s", e)
         return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning("[get_live] invalid request: %s", e)
+        return {"error": str(e)}, 400
+    except Exception:
+        logger.exception("[get_live] failed to grab stream")
+        return {"error": "Failed to grab stream"}, 500
+
+    if not m3u8_url:
+        logger.warning(
+            "[get_live] m3u8 not found platform=%s streamer_id=%s quality=%s",
+            platform_name,
+            streamer_id,
+            quality,
+        )
+        return {"error": "Live stream not found or quality unsupported"}, 404
+
     return redirect(m3u8_url, code=302)
 
 
@@ -171,6 +187,12 @@ def auto_url_parser(quality):
         except PermissionError as e:
             logger.warning("[detect] stream access denied: %s", e)
             return {"error": str(e)}, 403
+        except ValueError as e:
+            logger.warning("[detect] invalid request: %s", e)
+            return {"error": str(e)}, 400
+        except Exception:
+            logger.exception("[detect] failed to grab stream")
+            return {"error": "Failed to grab stream"}, 500
         if not m3u8_url:
             return "Live stream not found", 404
 
