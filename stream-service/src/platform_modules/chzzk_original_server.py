@@ -1,3 +1,4 @@
+# 리팩터링 전 chzzk.py의 원본 구현 스냅샷. 앱에서 사용하지 않는 참고용 파일.
 import requests
 from platform_modules.platform_default import PlatformDefault
 import json

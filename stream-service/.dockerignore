@@ -5,3 +5,4 @@ __pycache__
 .gitignore
 Dockerfile
 .dockerignore
+src/ui/node_modules
