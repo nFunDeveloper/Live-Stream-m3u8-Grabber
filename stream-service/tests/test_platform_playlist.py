@@ -119,5 +119,72 @@ class PopkonTests(unittest.TestCase):
             Popkon().get_live("123", "720p")
 
 
+class ChzzkSearchTests(unittest.TestCase):
+    """라이브 제목 검색 + 채널 검색(live-detail 검증) 병합 동작을 확인한다"""
+
+    @staticmethod
+    def _fake_requests(route):
+        class _Fake:
+            def get(self, url, headers=None, params=None, timeout=None):
+                return FakeResponse(route(url))
+
+        return _Fake()
+
+    def test_search_merges_title_and_channel_results(self):
+        from unittest.mock import patch
+        from platform_modules import chzzk as chzzk_module
+
+        def route(url):
+            if 'search/lives' in url:
+                return {"content": {"data": [{
+                    "live": {"liveTitle": "게임 방송", "liveCategoryValue": "게임",
+                             "concurrentUserCount": 5, "liveImageUrl": "", "openDate": ""},
+                    "channel": {"channelId": "AAA", "channelName": "채널A"},
+                }]}}
+            if 'search/channels' in url:
+                return {"content": {"data": [
+                    {"channel": {"channelId": "AAA", "channelName": "채널A"}},  # 중복
+                    {"channel": {"channelId": "BBB", "channelName": "텐코 시부키"}},
+                ]}}
+            if 'channels/BBB/live-detail' in url:
+                return {"content": {"status": "OPEN", "liveTitle": "시부키 방송",
+                                    "channel": {"channelId": "BBB", "channelName": "텐코 시부키"},
+                                    "concurrentUserCount": 4282, "openDate": "",
+                                    "liveImageUrl": "", "liveCategoryValue": "게임"}}
+            raise AssertionError(f"unexpected url: {url}")
+
+        fake = self._fake_requests(route)
+        with patch.object(chzzk_module, 'requests', fake):
+            results = chzzk_module.Chzzk().search_lives("시부키", limit=8)
+
+        ids = [item['streamer_id'] for item in results]
+        self.assertEqual(ids, ["AAA", "BBB"])
+        shibuki = results[1]
+        self.assertEqual(shibuki['streamer_name'], "텐코 시부키")
+        self.assertEqual(shibuki['viewers'], 4282)
+        self.assertEqual(shibuki['url'], "https://chzzk.naver.com/live/BBB")
+
+    def test_search_skips_offline_channels(self):
+        from unittest.mock import patch
+        from platform_modules import chzzk as chzzk_module
+
+        def route(url):
+            if 'search/lives' in url:
+                return {"content": {"data": []}}
+            if 'search/channels' in url:
+                return {"content": {"data": [
+                    {"channel": {"channelId": "OFF", "channelName": "오프라인 채널"}},
+                ]}}
+            if 'channels/OFF/live-detail' in url:
+                return {"content": {"status": "CLOSE"}}
+            raise AssertionError(f"unexpected url: {url}")
+
+        fake = self._fake_requests(route)
+        with patch.object(chzzk_module, 'requests', fake):
+            results = chzzk_module.Chzzk().search_lives("오프라인", limit=8)
+
+        self.assertEqual(results, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from platform_modules.platform_default import PlatformDefault
 import json
 import logging
@@ -127,9 +128,24 @@ class Chzzk(PlatformDefault):
         }
 
     def search_lives(self, keyword, limit=8):
-        url = 'https://api.chzzk.naver.com/service/v1/search/lives'
+        # 1) 라이브 제목 검색
+        results = self.__search_live_titles(keyword, limit)
+        seen = {item['streamer_id'] for item in results}
+
+        # 2) 채널명 검색 보완 — 실명인증 방송 등 일부 방송은 라이브 검색 인덱스에서
+        # 누락되지만 채널 검색에는 나온다. live-detail로 방송 중 여부를 확인해 합친다.
+        channel_results = self.__search_channels(keyword, limit=limit)
+        for item in channel_results:
+            if item['streamer_id'] not in seen:
+                seen.add(item['streamer_id'])
+                results.append(item)
+                if len(results) >= limit:
+                    break
+        return results
+
+    def __search_live_titles(self, keyword, limit):
         response = requests.get(
-            url,
+            'https://api.chzzk.naver.com/service/v1/search/lives',
             headers=self.headers,
             params={'keyword': keyword, 'offset': 0, 'size': limit},
             timeout=6,
@@ -157,6 +173,56 @@ class Chzzk(PlatformDefault):
                 'url': f'https://chzzk.naver.com/live/{channel_id}',
             })
         return results
+
+    def __search_channels(self, keyword, limit):
+        response = requests.get(
+            'https://api.chzzk.naver.com/service/v1/search/channels',
+            headers=self.headers,
+            params={'keyword': keyword, 'offset': 0, 'size': limit},
+            timeout=6,
+        )
+        response.raise_for_status()
+        data = response.json().get('content', {}).get('data') or []
+        channel_ids = [
+            (item.get('channel') or {}).get('channelId')
+            for item in data
+            if (item.get('channel') or {}).get('channelId')
+        ]
+        if not channel_ids:
+            return []
+
+        results = []
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(self.__fetch_live_detail, cid): cid for cid in channel_ids}
+            for future in as_completed(futures):
+                channel_id = futures[future]
+                content = future.result()
+                if content.get('status') != 'OPEN':
+                    continue
+                info = self.__build_info(content)
+                results.append({
+                    'platform': 'chzzk',
+                    'streamer_id': channel_id,
+                    'streamer_name': info['streamer_name'],
+                    'title': info['title'],
+                    'category': info['category'],
+                    'viewers': info['viewers'],
+                    'thumbnail': info['thumbnail'],
+                    'started_at': info['started_at'],
+                    'url': f'https://chzzk.naver.com/live/{channel_id}',
+                })
+        return results
+
+    def __fetch_live_detail(self, channel_id):
+        try:
+            url = f'https://api.chzzk.naver.com/service/v3.2/channels/{channel_id}/live-detail'
+            headers = {**self.headers, 'Referer': f'https://chzzk.naver.com/live/{channel_id}'}
+            response = requests.get(url, headers=headers, timeout=6)
+            response.raise_for_status()
+            return response.json().get('content') or {}
+        except Exception:
+            logger.exception("[chzzk] live-detail check failed channel=%s", channel_id)
+            return {}
 
     def __request_stream_info(self, chzzk_id, quality='540p'):
         url = f'https://api.chzzk.naver.com/service/v3.2/channels/{chzzk_id}/live-detail'
