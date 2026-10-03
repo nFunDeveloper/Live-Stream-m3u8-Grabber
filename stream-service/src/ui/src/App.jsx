@@ -274,7 +274,7 @@ function App() {
       <div className="dot-grid" />
 
       {/* 데스크톱 사이드바 */}
-      <aside className="hidden md:flex w-72 shrink-0 relative z-10 border-r border-white/5 bg-black/30 backdrop-blur-xl">
+      <aside className="hidden md:flex w-72 shrink-0 min-w-0 relative z-10 border-r border-white/5 bg-black/30 backdrop-blur-xl">
         <Sidebar {...sidebarProps} />
       </aside>
 
@@ -285,7 +285,7 @@ function App() {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
           />
-          <aside className="relative z-10 w-72 max-w-[80vw] h-full border-r border-white/10 bg-[#0A0A0C]/95">
+          <aside className="relative z-10 w-72 max-w-[80vw] min-w-0 h-full border-r border-white/10 bg-[#0A0A0C]/95">
             <Sidebar {...sidebarProps} />
           </aside>
         </div>

@@ -92,7 +92,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
       onDragStart={handleDragStart}
       title="드래그하여 그룹에 추가"
       onClick={() => onPick(entry)}
-      className="group/item flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing hover:bg-white/[0.05] transition-colors"
+      className="group/item flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing hover:bg-white/[0.05] transition-colors min-w-0"
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -144,7 +144,7 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
       onDragOver={handleDragOver}
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
-      className={`rounded-lg transition-all ${
+      className={`rounded-lg transition-all min-w-0 ${
         dragOver ? 'ring-1 ring-white/50 bg-white/10' : ''
       }`}
     >
@@ -168,7 +168,7 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
         </IconButton>
       </div>
       {open && (
-        <div className="ml-3 pl-2 border-l border-white/5 flex flex-col gap-0.5">
+        <div className="ml-3 pl-2 border-l border-white/5 flex flex-col gap-0.5 min-w-0">
           {group.members.length === 0 && (
             <div className="px-2 py-1.5 text-[10px] text-zinc-600">
               히스토리 항목을 이 그룹으로 드래그해 저장하세요
@@ -181,7 +181,7 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onDeleteMembe
               tabIndex={0}
               onClick={() => onPick(member)}
               onKeyDown={(e) => e.key === 'Enter' && onPick(member)}
-              className="group/m flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-white/[0.05] transition-colors"
+              className="group/m flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-white/[0.05] transition-colors min-w-0"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -252,9 +252,9 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 flex flex-col gap-6 min-w-0">
         {/* 그룹 (최상단) */}
-        <section>
+        <section className="min-w-0">
           <SectionHeader
             icon={Layers}
             title="그룹"
@@ -294,7 +294,7 @@ export default function Sidebar({
               그룹을 만들어 자주 보는 방송인을 모아두면 클릭 한 번으로 다시 조회할 수 있습니다.
             </p>
           ) : (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               {groups.map((group) => (
                 <GroupItem
                   key={group.id}
@@ -314,7 +314,7 @@ export default function Sidebar({
         </section>
 
         {/* 검색 히스토리 */}
-        <section>
+        <section className="min-w-0">
           <SectionHeader
             icon={History}
             title="검색 히스토리"
@@ -331,7 +331,7 @@ export default function Sidebar({
               아직 검색 기록이 없습니다. 방송 URL을 추출하면 이곳에 쌓입니다.
             </p>
           ) : (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               {history.map((entry) => (
                 <HistoryItem
                   key={entry.key}
