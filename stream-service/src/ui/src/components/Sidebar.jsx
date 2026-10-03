@@ -11,6 +11,8 @@ import {
   Radio,
   Pencil,
   Check,
+  MoreVertical,
+  LayoutGrid,
 } from 'lucide-react';
 import PlatformChip from './PlatformChip.jsx';
 import { formatDateTime, formatViewers } from '../lib/platforms.js';
@@ -123,11 +125,14 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onReorderMember, onDeleteMember, onDropMember, onCopyM3u8, statuses }) {
+function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onReorderMember, onDeleteMember, onDropMember, onCopyM3u8, onOpenMultiView, statuses }) {
   const [dragOver, setDragOver] = useState(false);
   const [dragOverMemberKey, setDragOverMemberKey] = useState(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const closeMenu = () => setMenuOpen(false);
 
   const startEdit = () => {
     setEditing(true);
@@ -188,10 +193,41 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
       onDragOver={handleDragOver}
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
-      className={`rounded-lg transition-all min-w-0 ${
+      className={`rounded-lg transition-all min-w-0 relative ${
         dragOver ? 'ring-1 ring-white/50 bg-white/10' : ''
       }`}
     >
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={closeMenu} />
+          <div className="absolute right-1 top-9 z-40 w-40 rounded-xl border border-white/10 bg-[#0f0f11]/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => { closeMenu(); onOpenMultiView(group.id); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.07] transition-colors"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-zinc-400" />
+              모든 방송 보기
+            </button>
+            <button
+              type="button"
+              onClick={() => { closeMenu(); startEdit(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.07] transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5 text-zinc-400" />
+              이름 변경
+            </button>
+            <button
+              type="button"
+              onClick={() => { closeMenu(); onDeleteGroup(group); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors border-t border-white/5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              그룹 삭제
+            </button>
+          </div>
+        </>
+      )}
       {editing ? (
         <div className="flex items-center gap-1.5 px-2 py-1.5">
           <input
@@ -231,12 +267,9 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
             <span className="text-xs font-semibold text-zinc-200 truncate">{group.name}</span>
             <span className="text-[10px] text-zinc-600 ml-auto">{group.members.length}</span>
           </button>
-          <div className="hidden group-hover/g:flex items-center gap-0.5 shrink-0">
-            <IconButton title="그룹 이름 변경" onClick={startEdit}>
-              <Pencil className="w-3 h-3" />
-            </IconButton>
-            <IconButton danger title="그룹 삭제" onClick={() => onDeleteGroup(group)}>
-              <Trash2 className="w-3 h-3" />
+          <div className="hidden group-hover/g:flex items-center shrink-0">
+            <IconButton title="그룹 메뉴" onClick={() => setMenuOpen((v) => !v)}>
+              <MoreVertical className="w-3.5 h-3.5" />
             </IconButton>
           </div>
         </div>
@@ -337,6 +370,7 @@ export default function Sidebar({
   onDeleteMember,
   onDropMember,
   onCopyM3u8,
+  onOpenMultiView,
 }) {
   const [openGroups, setOpenGroups] = useState({});
   const [creating, setCreating] = useState(false);
@@ -425,6 +459,7 @@ export default function Sidebar({
                   onDeleteMember={onDeleteMember}
                   onDropMember={onDropMember}
                   onCopyM3u8={onCopyM3u8}
+                  onOpenMultiView={onOpenMultiView}
                   statuses={statuses}
                 />
               ))}

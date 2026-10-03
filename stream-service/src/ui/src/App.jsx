@@ -11,6 +11,7 @@ import {
 import Sidebar from './components/Sidebar.jsx';
 import PlayerPanel from './components/PlayerPanel.jsx';
 import SearchBar from './components/SearchBar.jsx';
+import MultiViewPanel from './components/MultiViewPanel.jsx';
 import {
   loadHistory,
   recordHistory,
@@ -86,6 +87,7 @@ function App() {
   const [groups, setGroups] = useState(() => loadGroups());
   const [statuses, setStatuses] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [multiViewGroupId, setMultiViewGroupId] = useState(null);
 
   const toastTimerRef = useRef(null);
 
@@ -330,7 +332,10 @@ function App() {
     onDeleteHistory: deleteHistoryEntry,
     onClearHistory: clearAllHistory,
     onCreateGroup: createGroup,
-    onDeleteGroup: deleteGroup,
+    onDeleteGroup: (group) => {
+      deleteGroup(group);
+      if (group.id === multiViewGroupId) setMultiViewGroupId(null);
+    },
     onRenameGroup: renameGroup,
     onReorderGroup: reorderGroup,
     onMoveMember: moveMemberToGroup,
@@ -339,7 +344,12 @@ function App() {
     onDeleteMember: deleteMember,
     onDropMember: dropMemberToGroup,
     onCopyM3u8: copyEntryM3u8,
+    onOpenMultiView: (groupId) => setMultiViewGroupId(groupId),
   };
+
+  const multiViewGroup = multiViewGroupId
+    ? groups.find((item) => item.id === multiViewGroupId) ?? null
+    : null;
 
   return (
     <div className="relative h-screen flex overflow-hidden font-sans select-none">
@@ -389,6 +399,18 @@ function App() {
         </header>
 
         <div className="w-full px-4 sm:px-6 py-6 flex flex-col gap-5 my-auto">
+          {multiViewGroup ? (
+            <MultiViewPanel
+              group={multiViewGroup}
+              statuses={statuses}
+              onClose={() => setMultiViewGroupId(null)}
+              onPick={(member) => {
+                setMultiViewGroupId(null);
+                handleGrab(null, member.url);
+              }}
+            />
+          ) : (
+          <>
           {/* 입력 폼 */}
           <form
             onSubmit={handleGrab}
@@ -454,6 +476,8 @@ function App() {
             <PlayerPanel result={result} showToast={showToast} />
           ) : (
             !error && <EmptyState />
+          )}
+          </>
           )}
         </div>
 
