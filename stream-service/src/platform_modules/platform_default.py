@@ -23,6 +23,14 @@ class PlatformDefault:
     def get_live(self):
         print(f"Get Live Stream Platform: {self.platform}, Version: {self.version}")
 
+    @staticmethod
+    def first_of(source, *keys):
+        for key in keys:
+            value = source.get(key)
+            if value:
+                return value
+        return None
+
     def get_variant_url_from_master(self, master_m3u8_url, quality, headers=None):
         session = getattr(self, "session", requests)
         response = session.get(

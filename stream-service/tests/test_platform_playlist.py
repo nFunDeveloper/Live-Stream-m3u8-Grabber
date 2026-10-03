@@ -76,7 +76,7 @@ class PandaliveTests(unittest.TestCase):
     def _live_info():
         return {
             "result": True,
-            "media": {"isLive": True},
+            "media": {"isLive": True, "title": "판다 방송", "userNick": "판다스트리머"},
             "PlayList": {
                 "hls": [
                     {"url": "https://cdn.example.com/master.m3u8", "name": "1080p", "sort": 1}
@@ -87,14 +87,21 @@ class PandaliveTests(unittest.TestCase):
     def test_auto_returns_master_playlist(self):
         platform = Pandalive()
         platform.session = FakeSession([self._live_info()])
-        url = platform.get_live("streamer", "auto")
-        self.assertEqual(url, "https://cdn.example.com/master.m3u8")
+        info = platform.get_live("streamer", "auto")
+        self.assertEqual(info["m3u8_url"], "https://cdn.example.com/master.m3u8")
+
+    def test_auto_includes_metadata(self):
+        platform = Pandalive()
+        platform.session = FakeSession([self._live_info()])
+        info = platform.get_live("streamer", "auto")
+        self.assertEqual(info["title"], "판다 방송")
+        self.assertEqual(info["streamer_name"], "판다스트리머")
 
     def test_quality_returns_variant(self):
         platform = Pandalive()
         platform.session = FakeSession([self._live_info(), MASTER_PLAYLIST])
-        url = platform.get_live("streamer", "1080p")
-        self.assertEqual(url, "https://cdn.example.com/1080p/stream.m3u8")
+        info = platform.get_live("streamer", "1080p")
+        self.assertEqual(info["m3u8_url"], "https://cdn.example.com/1080p/stream.m3u8")
 
     def test_permission_required_raises_permission_error(self):
         platform = Pandalive()

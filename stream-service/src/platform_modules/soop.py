@@ -36,34 +36,45 @@ class Soop(PlatformDefault):
         selected_quality = self.quality_list.get(quality)
         if not selected_quality:
             logger.warning("[soop] unsupported quality=%s", quality)
-            return ""
+            return {"m3u8_url": ""}
 
         broadcast_info = self.__get_soop_broadcast_info(soop_id, self.headers)
         logger.info("[soop] broadcast info=%s", broadcast_info)
 
+        data = broadcast_info.get("data") or {}
+        info = {
+            "m3u8_url": "",
+            "title": self.first_of(data, "title", "broad_title") or "",
+            "streamer_name": self.first_of(data, "user_nick", "nick") or "",
+            "category": self.first_of(data, "cate_name", "category_name") or "",
+            "started_at": self.first_of(data, "broad_start", "broad_start_date") or "",
+            "viewers": data.get("broad_cnt") or data.get("viewer_cnt"),
+            "thumbnail": self.first_of(data, "broad_thumb", "broad_thumbnail") or "",
+        }
+
         if broadcast_info.get("result") != 1 or "data" not in broadcast_info:
             logger.warning("[soop] live broadcast not found response=%s", broadcast_info)
-            return ""
+            return info
 
-        broad_key = broadcast_info["data"]["origianl_broad_no"]
+        broad_key = data["origianl_broad_no"]
         auth_info = self.__request_soop_auth_info(soop_id, selected_quality, self.headers)
         logger.info("[soop] auth info=%s", auth_info)
 
         auth_key = auth_info.get("CHANNEL", {}).get("AID")
         if not auth_key:
             logger.warning("[soop] auth key not found response=%s", auth_info)
-            return ""
+            return info
 
         broad_url = self.__get_soop_broad_url(broad_key, selected_quality)
         logger.info("[soop] broad url=%s", broad_url)
 
         if broad_url.get("result") != "1" or "view_url" not in broad_url:
             logger.warning("[soop] stream assign failed response=%s", broad_url)
-            return ""
+            return info
 
-        m3u8_url = broad_url["view_url"] + f"?aid={auth_key}"
-        logger.info("[soop] m3u8_url=%s", m3u8_url)
-        return m3u8_url
+        info["m3u8_url"] = broad_url["view_url"] + f"?aid={auth_key}"
+        logger.info("[soop] m3u8_url=%s", info["m3u8_url"])
+        return info
 
     def __request_soop_auth_info(self, soop_id, quality='hd', headers=headers):
         url = f'https://live.sooplive.co.kr/afreeca/player_live_api.php'  # ?bjid={soop_id}'
@@ -86,6 +97,3 @@ class Soop(PlatformDefault):
         response = requests.post(url, headers=headers, data=form_data, timeout=10)
         response.raise_for_status()
         return response.json()
-
-# https://mobile-web.stream.sooplive.co.kr/live-stm-08/auth_playlist.m3u8?aid=.A32.pxqRXFPZNcY9Qg1.Xv8pB4hrEuT7YLVCVmfYSBn5xJ29hCFQQf3RGcB8-PwKHcGBNKmO0Zco9TTmtdbzzDAsLfbSQ4nnausfxkkhIwfm-rilDripar8vloMc7tVANFFEtpxfmuodGGtYb1j6GGqzlBooc1c2KKSLM1yGtSQSmKKTZnV5v2CkDglItec7G4_ZltKatgZ0ZCTBPRTp
-# https://mobile-web.stream.sooplive.co.kr/live-stm-08/auth_playlist.m3u8?aid=.A32.pxqRXFPZNcY9Qg1.Xv8pB4hrEuT7YLVCVmfYSLMZ2a5yrBl4UipMHiQ2q9wLwRoh1NqObIpWFCjZftkt-gY8DTqIvXXxmmZKcY0ZKINTVU2mfLq6K4PxSqTXvspMBL2lyAirnuTS9geUVG4Qx9kCOtAdu01Ym4YwSY1vZy1whvYkVhFnn6QMkbx0GZ0JiaAWJt1Czitn0SvbEJyb

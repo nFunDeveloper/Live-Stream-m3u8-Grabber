@@ -44,30 +44,36 @@ class Chzzk(PlatformDefault):
         req = self.__request_stream_info(chzzk_id, quality)
         self.__log_step("live-detail json response", req)
 
-        if "content" not in req or "livePlaybackJson" not in req["content"]:
-            self.__log_step("missing livePlaybackJson", req)
-            return ""
+        content = req.get("content") or {}
+        info = self.__build_info(content)
 
-        live_playback_json = json.loads(req["content"]["livePlaybackJson"])
+        if "livePlaybackJson" not in content:
+            self.__log_step("missing livePlaybackJson", req)
+            return info
+
+        live_playback_json = json.loads(content["livePlaybackJson"])
         self.__log_step("parsed livePlaybackJson", live_playback_json)
 
         media = live_playback_json.get("media", [])
         self.__log_step("media candidates", media)
-        if len(media) < 2:
+        if not media:
             self.__log_step("media candidate missing", {"media_count": len(media)})
-            return ""
+            return info
+
+        # 일부 방송(스포츠 중계 등)은 media 후보가 1개뿐일 수 있다
+        main_media = media[1] if len(media) >= 2 else media[0]
 
         normalized_quality = self.quality_list.get(quality)
         if not normalized_quality:
             self.__log_step("unsupported requested quality", {"quality": quality})
-            return ""
+            return info
 
         if normalized_quality == 'auto':
-            m3u8_url = media[1]["path"]
-            self.__log_step("auto quality selected", {"m3u8_url": m3u8_url})
+            info["m3u8_url"] = main_media["path"]
+            self.__log_step("auto quality selected", {"m3u8_url": info["m3u8_url"]})
         else:
-            master_m3u8_url = media[1]["path"]
-            quality_jsons = media[1].get("encodingTrack", [])
+            master_m3u8_url = main_media["path"]
+            quality_jsons = main_media.get("encodingTrack", [])
             self.__log_step("encoding tracks", quality_jsons)
 
             selected_track = self.__find_encoding_track(quality_jsons, normalized_quality)
@@ -82,7 +88,7 @@ class Chzzk(PlatformDefault):
                         ],
                     },
                 )
-                return ""
+                return info
 
             self.__log_step("selected encoding track", selected_track)
             m3u8_url = selected_track.get("path", "")
@@ -101,9 +107,24 @@ class Chzzk(PlatformDefault):
                         "normalized_quality": normalized_quality,
                     },
                 )
-                m3u8_url = ""
-        self.__log_step("final m3u8_url", {"m3u8_url": m3u8_url})
-        return m3u8_url
+            info["m3u8_url"] = m3u8_url
+        self.__log_step("final m3u8_url", {"m3u8_url": info["m3u8_url"]})
+        return info
+
+    @staticmethod
+    def __build_info(content):
+        channel = content.get("channel") or {}
+        # liveImageUrl은 image_{type}.jpg 템플릿으로 내려온다
+        thumbnail = (content.get("liveImageUrl") or content.get("defaultThumbnailImageUrl") or "")
+        return {
+            "m3u8_url": "",
+            "title": content.get("liveTitle") or "",
+            "streamer_name": channel.get("channelName") or "",
+            "category": content.get("liveCategoryValue") or content.get("liveCategory") or "",
+            "started_at": content.get("openDate") or "",
+            "viewers": content.get("concurrentUserCount"),
+            "thumbnail": thumbnail.replace("{type}", "1080"),
+        }
 
     def __request_stream_info(self, chzzk_id, quality='540p'):
         url = f'https://api.chzzk.naver.com/service/v3.2/channels/{chzzk_id}/live-detail'

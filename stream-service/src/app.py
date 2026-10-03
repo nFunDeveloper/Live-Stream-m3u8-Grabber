@@ -65,7 +65,7 @@ def grab_api():
             path_split,
             detected_platform[1],
         )
-        
+
         # URL 경로 검증
         try:
             streamer_id = _extract_streamer_id(parsed_url, detected_platform)
@@ -74,9 +74,9 @@ def grab_api():
                 return {"error": "Invalid streamer URL format"}, 400
 
             logger.info("[grab] streamer_id=%s", streamer_id)
-            m3u8_url = get_m3u8(platform_name, streamer_id, quality)
-            
-            if not m3u8_url:
+            info = get_stream_info(platform_name, streamer_id, quality)
+
+            if not info or not info.get("m3u8_url"):
                 logger.warning(
                     "[grab] m3u8 not found platform=%s streamer_id=%s quality=%s",
                     platform_name,
@@ -84,13 +84,19 @@ def grab_api():
                     quality,
                 )
                 return {"error": "Live stream not found or quality unsupported"}, 404
-                
-            logger.info("[grab] success m3u8_url=%s", m3u8_url)
+
+            logger.info("[grab] success m3u8_url=%s", info["m3u8_url"])
             return {
-                "m3u8_url": m3u8_url,
+                "m3u8_url": info["m3u8_url"],
                 "platform": platform_name,
                 "streamer_id": streamer_id,
-                "quality": quality
+                "quality": quality,
+                "title": info.get("title") or "",
+                "streamer_name": info.get("streamer_name") or "",
+                "category": info.get("category") or "",
+                "started_at": info.get("started_at") or "",
+                "viewers": info.get("viewers"),
+                "thumbnail": info.get("thumbnail") or "",
             }
         except ValueError as e:
             logger.warning("[grab] invalid request: %s", e)
@@ -104,6 +110,7 @@ def grab_api():
 
     logger.warning("[grab] unsupported hostname=%s", parsed_url.hostname)
     return {"error": "Unsupported platform or invalid URL"}, 400
+
 
 @app.route('/<path:platform_name>/<path:streamer_id>/<path:quality>', methods=['GET'])
 def get_live(platform_name, streamer_id, quality='540p'):
@@ -131,21 +138,24 @@ def get_live(platform_name, streamer_id, quality='540p'):
     return redirect(m3u8_url, code=302)
 
 
-def get_m3u8(platform_name, streamer_id, quality='540p'):
+def get_stream_info(platform_name, streamer_id, quality='540p'):
     if platform_name not in platforms:
-        logger.warning("[get_m3u8] unknown platform=%s", platform_name)
+        logger.warning("[get_stream_info] unknown platform=%s", platform_name)
         return None
 
     platform = platforms[platform_name]
     logger.info(
-        "[get_m3u8] platform=%s streamer_id=%s quality=%s",
+        "[get_stream_info] platform=%s streamer_id=%s quality=%s",
         platform_name,
         streamer_id,
         quality,
     )
-    m3u8_url = platform.get_live(streamer_id, quality)
+    return platform.get_live(streamer_id, quality)
 
-    return m3u8_url
+
+def get_m3u8(platform_name, streamer_id, quality='540p'):
+    info = get_stream_info(platform_name, streamer_id, quality)
+    return (info or {}).get("m3u8_url") or ""
 
 
 def _extract_streamer_id(parsed_url, detected_platform):
@@ -199,6 +209,7 @@ def auto_url_parser(quality):
         return redirect(m3u8_url, code=302)
 
     return "알 수 없는 오류", 400
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)

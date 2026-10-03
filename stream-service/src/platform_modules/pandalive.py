@@ -46,7 +46,7 @@ class Pandalive(PlatformDefault):
         normalized_quality = self.quality_list.get(quality)
         if not normalized_quality:
             logger.warning("[pandalive] unsupported quality=%s", quality)
-            return ""
+            return {"m3u8_url": ""}
 
         live_info = self.__request_live_info(user_id)
         logger.info(
@@ -55,6 +55,18 @@ class Pandalive(PlatformDefault):
             live_info.get("message"),
             live_info.get("media", {}),
         )
+        media = live_info.get("media") or {}
+        member = live_info.get("member") or {}
+        info = {
+            "m3u8_url": "",
+            "title": media.get("title") or "",
+            "streamer_name": self.first_of(member, "userNick") or self.first_of(media, "userNick", "userId") or user_id,
+            "category": "",
+            "started_at": self.first_of(media, "defaultStartDate", "openDate") or "",
+            "viewers": media.get("userCount") or media.get("viewerCount"),
+            "thumbnail": self.first_of(media, "defaultThumbnail", "thumbnailUrl", "thumbnail") or "",
+        }
+
         if not live_info.get("result"):
             message = live_info.get("message") or "Live stream is not available."
             error_code = live_info.get("errorData", {}).get("code")
@@ -67,26 +79,28 @@ class Pandalive(PlatformDefault):
             if error_code in ("needAdult", "needLogin", "needPw", "needCoin", "needFan"):
                 raise PermissionError(message)
 
-            return ""
+            return info
 
-        if not live_info.get("media", {}).get("isLive"):
+        if not media.get("isLive"):
             logger.warning("[pandalive] stream not live response=%s", live_info)
-            return ""
+            return info
 
         playlist_url = self.__select_playlist_url(live_info.get("PlayList", {}), normalized_quality)
         if not playlist_url:
             logger.warning("[pandalive] playlist url not found response=%s", live_info)
-            return ""
+            return info
 
         if normalized_quality == "auto":
-            return playlist_url
+            info["m3u8_url"] = playlist_url
+            return info
 
         headers = {
             **self.headers,
             "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
         }
         variant_url = self.get_variant_url_from_master(playlist_url, normalized_quality, headers)
-        return variant_url or playlist_url
+        info["m3u8_url"] = variant_url or playlist_url
+        return info
 
     def __request_live_info(self, user_id):
         headers = {

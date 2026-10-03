@@ -11,6 +11,22 @@ import app as app_module
 
 CHZZK_URL = "https://chzzk.naver.com/live/test_channel"
 
+FAKE_INFO = {
+    "m3u8_url": "https://cdn.example.com/master.m3u8",
+    "title": "테스트 방송",
+    "streamer_name": "테스트 스트리머",
+    "category": "테스트 카테고리",
+    "started_at": "2026-10-03 08:09:20",
+    "viewers": 10240,
+    "thumbnail": "https://cdn.example.com/thumb.jpg",
+}
+
+
+def fake_platform(**overrides):
+    platform = Mock()
+    platform.get_live.return_value = {**FAKE_INFO, **overrides}
+    return platform
+
 
 class GrabApiTests(unittest.TestCase):
     def setUp(self):
@@ -28,10 +44,8 @@ class GrabApiTests(unittest.TestCase):
         response = self.client.get("/api/grab?url=https://chzzk.naver.com/live")
         self.assertEqual(response.status_code, 400)
 
-    def test_success_returns_m3u8_url(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = "https://cdn.example.com/master.m3u8"
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+    def test_success_returns_metadata(self):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform()}):
             response = self.client.get(f"/api/grab?url={CHZZK_URL}&quality=720p")
 
         self.assertEqual(response.status_code, 200)
@@ -40,34 +54,38 @@ class GrabApiTests(unittest.TestCase):
         self.assertEqual(body["platform"], "chzzk")
         self.assertEqual(body["streamer_id"], "test_channel")
         self.assertEqual(body["quality"], "720p")
-        fake_platform.get_live.assert_called_once_with("test_channel", "720p")
+        self.assertEqual(body["title"], "테스트 방송")
+        self.assertEqual(body["streamer_name"], "테스트 스트리머")
+        self.assertEqual(body["category"], "테스트 카테고리")
+        self.assertEqual(body["started_at"], "2026-10-03 08:09:20")
+        self.assertEqual(body["viewers"], 10240)
+        self.assertEqual(body["thumbnail"], "https://cdn.example.com/thumb.jpg")
 
     def test_popkon_stream_key_uses_cast_and_partner_code(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = "https://cdn.example.com/master.m3u8"
         url = "https://www.popkontv.com/live/view?castId=123&partnerCode=ABC"
-        with patch.dict(app_module.platforms, {"popkon": fake_platform}):
+        platform = fake_platform()
+        with patch.dict(app_module.platforms, {"popkon": platform}):
             response = self.client.get(f"/api/grab?url={quote(url, safe='')}")
 
         self.assertEqual(response.status_code, 200)
-        fake_platform.get_live.assert_called_once_with("123|ABC", "auto")
+        platform.get_live.assert_called_once_with("123|ABC", "auto")
 
     def test_permission_error_returns_403(self):
-        fake_platform = Mock()
-        fake_platform.get_live.side_effect = PermissionError("성인 인증이 필요한 방송입니다.")
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+        platform = fake_platform()
+        platform.get_live.side_effect = PermissionError("성인 인증이 필요한 방송입니다.")
+        with patch.dict(app_module.platforms, {"chzzk": platform}):
             response = self.client.get(f"/api/grab?url={CHZZK_URL}")
 
         self.assertEqual(response.status_code, 403)
         self.assertIn("성인 인증", response.get_json()["error"])
 
     def test_value_error_returns_400_with_message(self):
-        fake_platform = Mock()
-        fake_platform.get_live.side_effect = ValueError(
+        platform = fake_platform()
+        platform.get_live.side_effect = ValueError(
             "Popkon stream key must include castId and partnerCode."
         )
         url = "https://www.popkontv.com/live/view?castId=123&partnerCode=ABC"
-        with patch.dict(app_module.platforms, {"popkon": fake_platform}):
+        with patch.dict(app_module.platforms, {"popkon": platform}):
             response = self.client.get(f"/api/grab?url={quote(url, safe='')}")
 
         self.assertEqual(response.status_code, 400)
@@ -76,24 +94,26 @@ class GrabApiTests(unittest.TestCase):
             "Popkon stream key must include castId and partnerCode.",
         )
 
+    def test_empty_m3u8_returns_404(self):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform(m3u8_url="")}):
+            response = self.client.get(f"/api/grab?url={CHZZK_URL}")
+
+        self.assertEqual(response.status_code, 404)
+
 
 class LegacyRouteTests(unittest.TestCase):
     def setUp(self):
         self.client = app_module.app.test_client()
 
     def test_success_redirects_to_m3u8(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = "https://cdn.example.com/master.m3u8"
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform()}):
             response = self.client.get("/chzzk/test_channel/720p")
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], "https://cdn.example.com/master.m3u8")
 
     def test_empty_m3u8_returns_404(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = ""
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform(m3u8_url="")}):
             response = self.client.get("/chzzk/test_channel/720p")
 
         self.assertEqual(response.status_code, 404)
@@ -103,11 +123,11 @@ class LegacyRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_value_error_returns_400(self):
-        fake_platform = Mock()
-        fake_platform.get_live.side_effect = ValueError(
+        platform = fake_platform()
+        platform.get_live.side_effect = ValueError(
             "Popkon stream key must include castId and partnerCode."
         )
-        with patch.dict(app_module.platforms, {"popkon": fake_platform}):
+        with patch.dict(app_module.platforms, {"popkon": platform}):
             response = self.client.get("/popkon/123/720p")
 
         self.assertEqual(response.status_code, 400)
@@ -118,18 +138,14 @@ class DetectRouteTests(unittest.TestCase):
         self.client = app_module.app.test_client()
 
     def test_success_redirects_to_m3u8(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = "https://cdn.example.com/master.m3u8"
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform()}):
             response = self.client.get(f"/detect/auto?url={CHZZK_URL}")
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], "https://cdn.example.com/master.m3u8")
 
     def test_not_live_returns_404(self):
-        fake_platform = Mock()
-        fake_platform.get_live.return_value = ""
-        with patch.dict(app_module.platforms, {"chzzk": fake_platform}):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform(m3u8_url="")}):
             response = self.client.get(f"/detect/auto?url={CHZZK_URL}")
 
         self.assertEqual(response.status_code, 404)

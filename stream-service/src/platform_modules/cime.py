@@ -40,26 +40,40 @@ class Cime(PlatformDefault):
         normalized_quality = self.quality_list.get(quality)
         if not normalized_quality:
             logger.warning("[cime] unsupported quality=%s", quality)
-            return ""
+            return {"m3u8_url": ""}
 
         channel_slug = channel_slug.lstrip("@")
         live_info = self.__request_live_info(channel_slug)
         logger.info("[cime] live info=%s", live_info)
 
+        data = live_info.get("data") or {}
+        channel = data.get("channel") or {}
+        category = data.get("category") or {}
+        info = {
+            "m3u8_url": "",
+            "title": data.get("title") or "",
+            "streamer_name": channel.get("name") or channel.get("slug") or channel_slug,
+            "category": category.get("name") or "",
+            "started_at": data.get("openedAt") or "",
+            "viewers": data.get("curViewerCnt"),
+            "thumbnail": data.get("imageUrl") or "",
+        }
+
         if live_info.get("code") != 200 or "data" not in live_info:
             logger.warning("[cime] live info not found response=%s", live_info)
-            return ""
+            return info
 
         playback_url = (
-            live_info["data"].get("playbackUrl")
-            or live_info["data"].get("playback", {}).get("url")
+            data.get("playbackUrl")
+            or (data.get("playback") or {}).get("url")
         )
         if not playback_url:
             logger.warning("[cime] playback url not found response=%s", live_info)
-            return ""
+            return info
 
         if normalized_quality == "auto":
-            return playback_url
+            info["m3u8_url"] = playback_url
+            return info
 
         headers = {
             **self.headers,
@@ -67,7 +81,8 @@ class Cime(PlatformDefault):
             "Origin": "https://ci.me",
         }
         variant_url = self.get_variant_url_from_master(playback_url, normalized_quality, headers)
-        return variant_url or playback_url
+        info["m3u8_url"] = variant_url or playback_url
+        return info
 
     def __request_live_info(self, channel_slug):
         url = f"https://ci.me/api/app/channels/{channel_slug}/live"

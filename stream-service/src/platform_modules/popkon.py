@@ -54,13 +54,23 @@ class Popkon(PlatformDefault):
         normalized_quality = self.quality_list.get(quality)
         if not normalized_quality:
             logger.warning("[popkon] unsupported quality=%s", quality)
-            return ""
+            return {"m3u8_url": ""}
 
         cast_id, partner_code = self.__parse_stream_key(stream_key)
         live_info = self.__request_page_live_info(cast_id, partner_code)
         if not live_info:
             logger.warning("[popkon] live info not found cast_id=%s partner_code=%s", cast_id, partner_code)
-            return ""
+            return {"m3u8_url": ""}
+
+        info = {
+            "m3u8_url": "",
+            "title": self.first_of(live_info, "mc_castTitle", "castTitle") or "",
+            "streamer_name": self.first_of(live_info, "mc_nickName", "nickName", "mc_castName") or "",
+            "category": self.first_of(live_info, "mc_gameName", "gameName", "mc_categoryName") or "",
+            "started_at": live_info.get("mc_castStartDate") or "",
+            "viewers": live_info.get("mc_viewCount") or live_info.get("viewCount"),
+            "thumbnail": self.first_of(live_info, "mc_thumbnailUrl", "thumbnailUrl", "mc_castImg") or "",
+        }
 
         if str(live_info.get("isAdult", "0")) == "1":
             raise PermissionError("성인 인증이 필요한 방송입니다.")
@@ -79,18 +89,20 @@ class Popkon(PlatformDefault):
             if status_code in ("L000A", "E4001", "E4100", "E4101", "E4102"):
                 raise PermissionError(message)
 
-            return ""
+            return info
 
         playlist_url = watch_info.get("data", {}).get("castHlsUrl")
         if not playlist_url:
             logger.warning("[popkon] playlist url not found response=%s", watch_info)
-            return ""
+            return info
 
         if normalized_quality == "auto":
-            return playlist_url
+            info["m3u8_url"] = playlist_url
+            return info
 
         variant_url = self.get_variant_url_from_master(playlist_url, normalized_quality, self.playlist_headers)
-        return variant_url or playlist_url
+        info["m3u8_url"] = variant_url or playlist_url
+        return info
 
     def __parse_stream_key(self, stream_key):
         parts = stream_key.split("|", 1)
