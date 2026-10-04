@@ -277,6 +277,21 @@ class StreamProxyTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("/api/stream?u=", response.get_data(as_text=True))
 
+    def test_allows_cime_ivs_segment_host(self):
+        # ci.me는 AWS IVS로 스트림을 내보내며 세그먼트는 마스터와 다른
+        # cloudfront.hls.live-video.net 호스트로 나간다. 이게 빠져 있으면
+        # 재생이 "Host is not allowed"로 실패한다.
+        playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n"
+
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = _fake_upstream(playlist)
+            response = self.client.get(
+                "/api/stream?u=https://13e6217ef783.001540a9585c.j.cloudfront.hls."
+                "live-video.net/v1/segment/CuMFHIk%2Fv1%2Fsegment%2Fabc.mp4"
+            )
+
+        self.assertEqual(response.status_code, 200)
+
     def test_rewrites_playlist_segments_to_proxy(self):
         playlist = (
             "#EXTM3U\n"

@@ -25,6 +25,9 @@ ALLOWED_HOST_SUFFIXES = (
     # 그중 하나라 허용 목록에 없으면 "Host is not allowed"로 거절된다.
     'navercdn.com',
     'ci.me',
+    # ci.me 스트림은 AWS IVS로 나가고 마스터/변형/세그먼트가 전부 다른
+    # 호스트다(*.playback / *.playlist / *.cloudfront.hls.live-video.net).
+    'live-video.net',
     'pandalive.co.kr',
     'popkontv.com',
 )
