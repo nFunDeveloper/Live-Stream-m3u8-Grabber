@@ -8,6 +8,10 @@ export default function SearchBar({ onPick }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  // 키보드로 고른 결과의 인덱스. -1이면 아직 선택된 항목이 없다
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listRef = useRef(null);
+  const itemRefs = useRef([]);
 
   const seqRef = useRef(0);
 
@@ -39,9 +43,49 @@ export default function SearchBar({ onPick }) {
     return () => clearTimeout(timer);
   }, [query]);
 
+  // 검색 결과가 바뀌면 선택 위치를 초기화한다
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [results]);
+
+  // 선택된 항목이 목록 안에 보도록 스크롤한다
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
   const pick = (item) => {
     setOpen(false);
+    setActiveIndex(-1);
     onPick(item);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (results.length === 0) return;
+      // 드롭다운이 닫혀 있으면 열면서 첫 항목부터 시작한다
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => {
+        if (current < 0) return delta > 0 ? 0 : results.length - 1;
+        // 맨 끝에서 더 내려가면 처음으로 돌아간다
+        return (current + delta + results.length) % results.length;
+      });
+      return;
+    }
+    if (e.key === 'Enter' && open && activeIndex >= 0) {
+      // 폼 제출로 중복 실행되지 않도록 막는다
+      e.preventDefault();
+      e.stopPropagation();
+      const item = results[activeIndex];
+      if (item) pick(item);
+    }
   };
 
   return (
@@ -55,7 +99,11 @@ export default function SearchBar({ onPick }) {
           onFocus={() => {
             if (results.length > 0) setOpen(true);
           }}
-          onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+          onKeyDown={onKeyDown}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="search-results"
+          aria-activedescendant={activeIndex >= 0 ? `search-result-${activeIndex}` : undefined}
           placeholder="방송 검색 — 입력 시 실시간으로 방송을 찾아줍니다"
           className="w-full bg-transparent border-none outline-none text-white placeholder:text-zinc-500 text-sm"
         />
@@ -71,13 +119,20 @@ export default function SearchBar({ onPick }) {
                 {loading ? '검색 중...' : '검색 결과가 없습니다'}
               </div>
             ) : (
-              <ul className="max-h-80 overflow-y-auto py-1">
-                {results.map((item) => (
+              <ul id="search-results" ref={listRef} className="max-h-80 overflow-y-auto py-1" role="listbox">
+                {results.map((item, index) => (
                   <li key={`${item.platform}:${item.streamer_id}`}>
                     <button
                       type="button"
+                      id={`search-result-${index}`}
+                      ref={(el) => { itemRefs.current[index] = el; }}
                       onClick={() => pick(item)}
-                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/[0.06] transition-colors text-left"
+                      onMouseEnter={() => setActiveIndex(index)}
+                      role="option"
+                      aria-selected={index === activeIndex}
+                      className={`w-full flex items-center gap-3 px-3 py-2 transition-colors text-left ${
+                        index === activeIndex ? 'bg-white/10' : 'hover:bg-white/[0.06]'
+                      }`}
                     >
                       <div className="w-16 aspect-video rounded-md overflow-hidden bg-black/50 border border-white/10 shrink-0">
                         {item.thumbnail && (
@@ -113,7 +168,7 @@ export default function SearchBar({ onPick }) {
               </ul>
             )}
             <div className="px-3 py-1.5 border-t border-white/5 text-[10px] text-zinc-600">
-              검색 지원 플랫폼: 치지직 · ci.me
+              ↑↓ 이동 · Enter 선택 · Esc 닫기 — 검색 지원 플랫폼: 치지직 · ci.me
             </div>
           </div>
         </>
