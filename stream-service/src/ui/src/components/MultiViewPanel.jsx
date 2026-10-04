@@ -20,6 +20,10 @@ function MultiViewTile({
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
+  // 세대 번호. 재시도나 슬롯 교체로 이전 load가 새 load를 덮어쓰지 못하게 한다.
+  const generationRef = useRef(0);
+  const timersRef = useRef([]);
+  const videoListenersRef = useRef(null);
   const [state, setState] = useState('loading'); // loading | ready | error
   const [viewers, setViewers] = useState(statuses?.viewers ?? null);
   const [freshUrl, setFreshUrl] = useState('');
@@ -33,7 +37,21 @@ function MultiViewTile({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    // 이전 세대의 로드는 전부 무효화한다. destroy가 늦게 도착해 새 Hls를 죽이는 일이 있다.
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+    if (videoListenersRef.current) {
+      videoListenersRef.current();
+      videoListenersRef.current = null;
+    }
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const isStale = () => generationRef.current !== generation;
 
     // 동시시청 제한에 걸린 방송은 로드하지 않는다 — 재시도 때 함께 다시 판단한다
     if (deferred) {
@@ -43,35 +61,39 @@ function MultiViewTile({
 
     const load = async () => {
       setState('loading');
-      // 무한 로딩 방지 — grab이 멈추거나 첫 프레임이 안 오면 실패로 전환한다
-      let settled = false;
+      // 무한 로딩 방지 — grab이 멈추거나 첫 프레임이 안 오면 실패로 전환한다.
+      // ready 이후에 끊기는 경우도 실패로 보아 재시도 버튼을 띄운다.
+      let frameSeen = false;
+      // 첫 프레임 전에 쌓인 hls 오류 수
+      let earlyErrors = 0;
       const fail = () => {
-        if (cancelled || settled) return;
-        settled = true;
-        clearTimeout(grabTimer);
+        if (isStale()) return;
+        timersRef.current.forEach(clearTimeout);
+        timersRef.current = [];
         if (hlsRef.current) {
           hlsRef.current.destroy();
           hlsRef.current = null;
         }
         setState('error');
       };
-      const grabTimer = setTimeout(fail, GRAB_TIMEOUT_MS);
-      let frameTimer = null;
+      timersRef.current = [
+        setTimeout(fail, GRAB_TIMEOUT_MS),
+        setTimeout(fail, GRAB_TIMEOUT_MS + FIRST_FRAME_TIMEOUT_MS),
+      ];
 
       // 항상 새 URL을 추출한다 — 저장된 m3u8은 만료되었을 수 있다
       try {
         const response = await fetch(`/api/grab?url=${encodeURIComponent(member.url)}&quality=auto`);
         const data = await response.json();
-        if (cancelled) return;
+        if (isStale()) return;
         if (!response.ok || !data.m3u8_url) {
-          setState('error');
+          fail();
           return;
         }
         setFreshUrl(data.m3u8_url);
         // 재생은 프록시를, 복사는 원본 주소를 쓴다
         const playbackUrl = data.playback_url || data.m3u8_url;
         setViewers(data.viewers ?? null);
-        clearTimeout(grabTimer);
 
         const video = videoRef.current;
         if (!video) {
@@ -79,14 +101,12 @@ function MultiViewTile({
           return;
         }
 
-        // manifest만 파싱되고 세그먼트가 안 오면 영영 검은 화면으로 남는다
-        frameTimer = setTimeout(fail, FIRST_FRAME_TIMEOUT_MS);
-
         // manifest 파싱은 재생 준비가 아니다. 실제로 픽셀이 그려질 때만 ready로 본다.
         const markReady = () => {
-          if (cancelled || settled) return;
-          settled = true;
-          clearTimeout(frameTimer);
+          if (isStale() || frameSeen) return;
+          frameSeen = true;
+          timersRef.current.forEach(clearTimeout);
+          timersRef.current = [];
           setState('ready');
           video.play().catch(() => {});
         };
@@ -96,23 +116,37 @@ function MultiViewTile({
         };
         video.addEventListener('loadeddata', waitForFrame);
         video.addEventListener('playing', waitForFrame);
+        video.addEventListener('error', fail);
+        videoListenersRef.current = () => {
+          video.removeEventListener('loadeddata', waitForFrame);
+          video.removeEventListener('playing', waitForFrame);
+          video.removeEventListener('error', fail);
+        };
         if (video.readyState >= 2) waitForFrame();
 
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+          // destroy가 이 인스턴스를 가리키도록 해 세대가 바뀌어도 안전하다
           hlsRef.current = hls;
           hls.loadSource(playbackUrl);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (cancelled || settled) return;
+            if (isStale() || frameSeen) return;
             // 파싱만으로는 준비된 게 아니므로 waitForFrame이 실제 프레임을 기다린다
             waitForFrame();
           });
           hls.on(Hls.Events.ERROR, (event, d) => {
-            if (cancelled || !d.fatal) return;
-            // 치지직 동시시청 초과 등은 NETWORK_ERROR뿐 아니라 MEDIA_ERROR로도
-            // 올라오기 때문에 타입을 가리지 않고 실패로 처리한다
-            fail();
+            if (isStale()) return;
+            // 치지직 동시시청 초과(마스터 403)는 fatal로 안 올라올 때가 있다.
+            // hls.js가 삼킨다고 영영 검은 화면이 남아 재시도 버튼조차 안 뜨므로
+            // 프레임 전 오류는 몇 번 더 쌓이면 실패로 승격한다.
+            if (!frameSeen) {
+              earlyErrors += 1;
+              if (d.fatal || earlyErrors >= 2) fail();
+              return;
+            }
+            // 프레임은 나왔으니 hls.js 자체 복구를 믿는다
+            if (d.fatal) fail();
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl;
@@ -122,15 +156,20 @@ function MultiViewTile({
           fail();
         }
       } catch {
-        clearTimeout(grabTimer);
         fail();
       }
     };
 
     load();
     return () => {
-      cancelled = true;
-      if (frameTimer) clearTimeout(frameTimer);
+      // 세대를 올려두면 늦게 도착한 load/Hls 콜백이 스스로 무시된다
+      if (generationRef.current === generation) generationRef.current = generation + 1;
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+      if (videoListenersRef.current) {
+        videoListenersRef.current();
+        videoListenersRef.current = null;
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;

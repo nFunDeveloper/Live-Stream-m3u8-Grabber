@@ -293,6 +293,20 @@ class StreamProxyTests(unittest.TestCase):
         self.assertIn("no-store", response.headers["Cache-Control"])
         self.assertEqual(response.get_json()["m3u8_url"], FAKE_INFO["m3u8_url"])
 
+    def test_upstream_rejection_becomes_bad_gateway(self):
+        # 치지직 동시시청 초과는 마스터 요청을 403으로 거절한다.
+        # 그대로 흘리면 hls.js가 치명적이지 않은 오류로 삼켜 재시도 UI가 안 뜬다.
+        upstream = _fake_upstream("FORBIDDEN", content_type="text/plain")
+        upstream.status_code = 403
+
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = upstream
+            response = self.client.get(
+                "/api/stream?u=https://prod-quote.chzzk.com/live/x/master.m3u8"
+            )
+
+        self.assertEqual(response.status_code, 502)
+
 
 def _fake_upstream(body, content_type="application/vnd.apple.mpegurl"):
     response = Mock()

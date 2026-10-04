@@ -161,6 +161,13 @@ def stream_proxy_api():
         return {"error": "Upstream request failed"}, 502
 
     content_type = upstream.headers.get('Content-Type', '')
+    # 치지직 동시시청 초과(6번째)는 마스터 요청 자체를 403으로 거절한다.
+    # 그대로 두면 hls.js가 치명적이지 않은 오류로 삼켜 재시도 UI가 뜨지 않는다.
+    if upstream.status_code in (401, 403, 429):
+        upstream.close()
+        logger.warning("[stream] upstream rejected status=%s url=%s", upstream.status_code, target)
+        return {"error": "Concurrent stream limit reached or access denied"}, 502
+
     try:
         if not is_probably_playlist(
             target, content_type, upstream.headers.get('Content-Length')
