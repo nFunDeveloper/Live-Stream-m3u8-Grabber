@@ -168,7 +168,7 @@ export default function SearchBar({ onPick }) {
               </ul>
             )}
             <div className="px-3 py-1.5 border-t border-white/5 text-[10px] text-zinc-600">
-              ↑↓ 이동 · Enter 선택 · Esc 닫기 — 검색 지원 플랫폼: 치지직 · ci.me
+              ↑↓ 이동 · Enter 선택 · Esc 닫기 — 검색 지원 플랫폼: SOOP · 치지직 · ci.me
             </div>
           </div>
         </>

@@ -27,6 +27,17 @@ class Soop(PlatformDefault):
             '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
         ),
     }
+    # SOOP 웹 검색이 쓰는 API. Referer/Origin 이 없으면 빈 응답을 준다.
+    search_api = 'https://sch.sooplive.com/api.php'
+    search_headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+        ),
+        'Referer': 'https://www.sooplive.com/search',
+        'Origin': 'https://www.sooplive.com',
+        'Accept': 'application/json, text/plain, */*',
+    }
     # livestream-manager.sooplive.co.kr 은 CNAME 대상의 A 레코드가 없어 해석에 실패한다.
     # 정식 도메인을 먼저 시도하고 전송 오류가 나면 .com 으로 폴백한다.
     resource_managers = (
@@ -120,6 +131,91 @@ class Soop(PlatformDefault):
         info["m3u8_url"] = broad_url["view_url"] + f"?aid={auth_key}"
         logger.info("[soop] m3u8_url=%s", info["m3u8_url"])
         return info
+
+    def search_lives(self, keyword, limit=8):
+        # SOOP 검색은 두 API를 함께 쓴다.
+        #  1) liveSearch: 지금 방송 중인 것만, 제목·채널명·시청자 수를 함께 준다.
+        #  2) searchHistory: 이름 후보만 주는 자동완성. 방송 상태가 없어서 검색 결과로는
+        #     쓸 수 없고, 1)의 부족한 필드(방송 이미지·방송자 닉네임)를 채우는 데만 쓴다.
+        profiles = self.__fetch_search_suggestions(keyword)
+        results = self.__search_live_broadcasts(keyword, profiles, limit)
+        return results[:limit]
+
+    def __search_live_broadcasts(self, keyword, profiles, limit):
+        response = requests.get(
+            self.search_api,
+            headers=self.search_headers,
+            params={
+                'l': 'DF',
+                'm': 'liveSearch',
+                'c': 'UTF-8',
+                'w': 'webk',
+                'isMobile': '0',
+                # 파생 방송( relayed )은 원본과 같은 제목으로 중복 노출된다
+                'onlyParent': '1',
+                'szType': 'json',
+                'v': '3.0',
+                'szKeyword': keyword,
+            },
+            timeout=6,
+        )
+        response.raise_for_status()
+        broadcasts = response.json().get('REAL_BROAD') or []
+
+        results = []
+        for item in broadcasts:
+            user_id = item.get('user_id') or ''
+            if not user_id:
+                continue
+            profile = profiles.get(user_id) or {}
+            thumbnail = item.get('broad_img') or profile.get('station_logo') or ''
+            results.append({
+                'platform': 'soop',
+                'streamer_id': user_id,
+                'streamer_name': item.get('station_name') or profile.get('user_nick') or user_id,
+                'title': item.get('broad_title') or item.get('b_broad_title') or '',
+                'category': item.get('broad_cate_name') or '',
+                'viewers': self.__to_int(item.get('m_current_view_cnt')),
+                'thumbnail': thumbnail,
+                'started_at': item.get('broad_start') or '',
+                'url': f'https://play.sooplive.com/{user_id}',
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+    def __fetch_search_suggestions(self, keyword):
+        """방송자 이름 후보를 user_id 기준으로 색인한다. 실패해도 검색 전체는 계속된다."""
+        try:
+            response = requests.get(
+                self.search_api,
+                headers=self.search_headers,
+                params={
+                    'm': 'searchHistory',
+                    'service': 'list',
+                    'd': keyword,
+                    'v': '3.0',
+                },
+                timeout=6,
+            )
+            response.raise_for_status()
+            suggestions = response.json().get('suggest_bj') or []
+        except (REQUEST_ERROR, ValueError) as error:
+            logger.warning("[soop] search suggestions failed keyword=%s error=%s", keyword, error)
+            return {}
+        return {
+            item['user_id']: item
+            for item in suggestions
+            if isinstance(item, dict) and item.get('user_id')
+        }
+
+    @staticmethod
+    def __to_int(value):
+        # 시청자 수가 '-' 같은 문자열로 오는 경우가 있다
+        try:
+            return int(str(value).replace(',', ''))
+        except (TypeError, ValueError):
+            return None
 
     def __request_soop_auth_info(self, soop_id, quality='hd', headers=headers):
         url = f'https://live.sooplive.co.kr/afreeca/player_live_api.php'  # ?bjid={soop_id}'

@@ -169,17 +169,25 @@ class SearchApiTests(unittest.TestCase):
         cime.search_lives.return_value = [
             {"platform": "cime", "url": "https://ci.me/@b/live", "viewers": 30}
         ]
-        soop = Mock(spec=app_module.Soop)  # search_lives 미구현 플랫폼
-        with patch.dict(app_module.platforms, {"chzzk": chzzk, "cime": cime, "soop": soop}, clear=True):
+        soop = Mock(spec=app_module.Soop)
+        soop.search_lives.return_value = [
+            {"platform": "soop", "url": "https://play.sooplive.com/c", "viewers": 20}
+        ]
+        popkon = Mock(spec=app_module.Popkon)  # search_lives 미구현 플랫폼
+        with patch.dict(
+            app_module.platforms,
+            {"chzzk": chzzk, "cime": cime, "soop": soop, "popkon": popkon},
+            clear=True,
+        ):
             response = self.client.get("/api/search?q=%EA%B2%8C%EC%9E%84")
 
         self.assertEqual(response.status_code, 200)
         results = response.get_json()["results"]
-        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results), 3)
         # 시청자 수 내림차순 정렬
-        self.assertEqual(results[0]["platform"], "cime")
+        self.assertEqual([item["platform"] for item in results], ["cime", "soop", "chzzk"])
         chzzk.search_lives.assert_called_once()
-        self.assertFalse(hasattr(soop, "search_lives"))  # 미구현 플랫폼은 검색 대상 아님
+        self.assertFalse(hasattr(popkon, "search_lives"))  # 미구현 플랫폼은 검색 대상 아님
 
     def test_search_swallows_platform_failure(self):
         chzzk = Mock(spec=app_module.Chzzk)
@@ -189,6 +197,21 @@ class SearchApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["results"], [])
+
+    def test_search_dedupes_soop_and_afreeca_alias(self):
+        # SOOP는 soop 과 afreeca 두 이름으로 등록돼 있어 같은 방송이 두 번 온다
+        entry = {"platform": "soop", "streamer_id": "abc", "viewers": 10}
+        soop = Mock(spec=app_module.Soop)
+        soop.search_lives.return_value = [entry]
+        afreeca = Mock(spec=app_module.Soop)
+        afreeca.search_lives.return_value = [entry]
+        with patch.dict(
+            app_module.platforms, {"soop": soop, "afreeca": afreeca}, clear=True
+        ):
+            response = self.client.get("/api/search?q=%EB%A1%9C")
+
+        results = response.get_json()["results"]
+        self.assertEqual([item["streamer_id"] for item in results], ["abc"])
 
 
 class StatusApiTests(unittest.TestCase):

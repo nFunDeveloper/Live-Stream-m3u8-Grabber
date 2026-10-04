@@ -187,6 +187,119 @@ class ChzzkSearchTests(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+class SoopSearchTests(unittest.TestCase):
+    """SOOP 라이브 검색과 자동완성 보강 동작을 확인한다"""
+
+    @staticmethod
+    def _fake_requests(route):
+        class _Fake:
+            def get(self, url, headers=None, params=None, timeout=None):
+                return FakeResponse(route(url, params))
+
+        return _Fake()
+
+    def test_search_maps_live_broadcast_fields(self):
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        def route(url, params):
+            self.assertEqual(url, soop_module.Soop.search_api)
+            if params.get('m') == 'searchHistory':
+                return {"suggest_bj": [
+                    {"user_id": "lshooooo", "user_nick": "이상호",
+                     "station_logo": "https://logo/a.jpg"},
+                ]}
+            self.assertEqual(params['m'], 'liveSearch')
+            self.assertEqual(params['szKeyword'], '롤')
+            return {"TOTAL_CNT": "479", "REAL_BROAD": [{
+                "broad_title": "롤ck 탑 vs 태민벨",
+                "b_broad_title": "폴백 제목",
+                "broad_img": "https://liveimg.sooplive.com/m/297588457",
+                "station_name": "Justlikethat",
+                "m_current_view_cnt": "2421",
+                "broad_cate_name": "리그 오브 레전드",
+                "broad_start": "2026-10-04 18:07:32",
+                "user_id": "joey1114",
+            }]}
+
+        fake = self._fake_requests(route)
+        with patch.object(soop_module, 'requests', fake):
+            results = soop_module.Soop().search_lives("롤", limit=8)
+
+        self.assertEqual(len(results), 1)
+        item = results[0]
+        self.assertEqual(item['platform'], 'soop')
+        self.assertEqual(item['streamer_id'], 'joey1114')
+        self.assertEqual(item['streamer_name'], 'Justlikethat')
+        self.assertEqual(item['title'], '롤ck 탑 vs 태민벨')
+        self.assertEqual(item['category'], '리그 오브 레전드')
+        self.assertEqual(item['viewers'], 2421)
+        self.assertEqual(item['started_at'], '2026-10-04 18:07:32')
+        self.assertEqual(item['url'], 'https://play.sooplive.com/joey1114')
+
+    def test_search_falls_back_to_suggestion_profile(self):
+        # 라이브 검색이 주는 이미지/닉네임이 비면 자동완성 후보로 채운다
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        def route(url, params):
+            if params.get('m') == 'searchHistory':
+                return {"suggest_bj": [
+                    {"user_id": "abc", "user_nick": "자동완성닉",
+                     "station_logo": "https://logo/x.jpg"},
+                ]}
+            return {"REAL_BROAD": [{"user_id": "abc", "broad_title": "방송",
+                                    "m_current_view_cnt": "-"}]}
+
+        fake = self._fake_requests(route)
+        with patch.object(soop_module, 'requests', fake):
+            results = soop_module.Soop().search_lives("방송", limit=8)
+
+        self.assertEqual(results[0]['streamer_name'], '자동완성닉')
+        self.assertEqual(results[0]['thumbnail'], 'https://logo/x.jpg')
+        # '-' 같은 값은 숫자로 바꾸지 못하고 None이 된다
+        self.assertIsNone(results[0]['viewers'])
+
+    def test_search_survives_suggestion_failure(self):
+        # 자동완성은 보조 정보라 실패해도 라이브 검색 결과는 그대로 낸다
+        import requests
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        error_type = requests.RequestException  # patch 후에도 실제 예외 타입 유지
+
+        def route(url, params):
+            if params.get('m') == 'searchHistory':
+                raise error_type("boom")
+            return {"REAL_BROAD": [{"user_id": "abc", "broad_title": "방송",
+                                    "station_name": "방송자", "m_current_view_cnt": "12"}]}
+
+        fake = self._fake_requests(route)
+        with patch.object(soop_module, 'requests', fake):
+            results = soop_module.Soop().search_lives("방송", limit=8)
+
+        self.assertEqual([item['streamer_name'] for item in results], ['방송자'])
+
+    def test_search_respects_limit_and_skips_missing_user_id(self):
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        def route(url, params):
+            if params.get('m') == 'searchHistory':
+                return {"suggest_bj": []}
+            return {"REAL_BROAD": [
+                {"broad_title": "user_id 없는 항목"},
+                {"user_id": "one", "broad_title": "첫째"},
+                {"user_id": "two", "broad_title": "둘째"},
+            ]}
+
+        fake = self._fake_requests(route)
+        with patch.object(soop_module, 'requests', fake):
+            results = soop_module.Soop().search_lives("검색", limit=2)
+
+        self.assertEqual([item['streamer_id'] for item in results], ['one', 'two'])
+
+
 class SoopTests(unittest.TestCase):
     """SOOP는 .co.kr CNAME이 끊겨 있어 .com 으로 폴백해야 한다"""
 

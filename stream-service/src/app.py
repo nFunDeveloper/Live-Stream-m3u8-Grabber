@@ -234,6 +234,12 @@ def search_api():
         for future in as_completed(futures):
             results.extend(future.result())
 
+    # SOOP는 soop 과 afreeca 두 별칭으로 등록돼 있어 같은 방송이 두 번 들어온다
+    deduped = {}
+    for item in results:
+        deduped.setdefault((item.get('platform'), item.get('streamer_id')), item)
+    results = list(deduped.values())
+
     results.sort(key=lambda item: item.get('viewers') or 0, reverse=True)
     return {"results": results}
 
