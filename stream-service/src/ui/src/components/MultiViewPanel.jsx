@@ -1,11 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { ChevronLeft, Loader2, Eye, Copy, Check, Volume2, VolumeX } from 'lucide-react';
+import { ChevronLeft, Loader2, Eye, Copy, Check, Volume2, VolumeX, RotateCw, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@heroui/react';
 import PlatformChip from './PlatformChip.jsx';
 import { formatViewers } from '../lib/platforms.js';
 
-function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggleMute, onTileClick }) {
+// 치지직은 동시시청 스트림을 5개까지만 허용한다. 넘으면 추가 로드는 실패한다.
+const MAX_ACTIVE_STREAMS = 5;
+
+function MultiViewTile({
+  member, statuses, focused, muted, unmuteSignal,
+  deferred, onPromote, onToggleMute, onTileClick,
+}) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
@@ -13,6 +19,9 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
   const [viewers, setViewers] = useState(statuses?.viewers ?? null);
   const [freshUrl, setFreshUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  // 여러 채널을 동시에 불러오면 일부가 시간outs으로 실패한다.
+  // attempt를 올리면 스트림을 처음부터 다시 잡는다.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => () => {
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
@@ -21,7 +30,14 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
   useEffect(() => {
     let cancelled = false;
 
+    // 동시시청 제한에 걸린 방송은 로드하지 않는다 — 재시도 때 함께 다시 판단한다
+    if (deferred) {
+      setState('deferred');
+      return undefined;
+    }
+
     const load = async () => {
+      setState('loading');
       // 항상 새 URL을 추출한다 — 저장된 m3u8은 만료되었을 수 있다
       try {
         const response = await fetch(`/api/grab?url=${encodeURIComponent(member.url)}&quality=auto`);
@@ -74,7 +90,18 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [member.key]);
+  }, [member.key, attempt, deferred]);
+
+  const retry = (e) => {
+    // 타일 클릭(확대)과 겹치지 않도록 전파를 막는다
+    e.stopPropagation();
+    setAttempt((current) => current + 1);
+  };
+
+  const promote = (e) => {
+    e.stopPropagation();
+    onPromote(member.key);
+  };
 
   // 전역 언뮤트 시 이미 멈춰버린 타일을 다시 재생시킨다
   useEffect(() => {
@@ -107,21 +134,51 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
       onClick={() => onTileClick(member.key)}
       title={focused ? '클릭하여 그리드로 돌아가기' : '클릭하여 크게 보기'}
     >
-      <video
-        ref={videoRef}
-        className="w-full h-full object-contain"
-        muted={muted}
-        playsInline
-        autoPlay
-      />
+      {state !== 'deferred' && (
+        <video
+          ref={videoRef}
+          className="w-full h-full object-contain"
+          muted={muted}
+          playsInline
+          autoPlay
+        />
+      )}
       {state === 'loading' && (
         <div className="absolute inset-0 flex items-center justify-center">
           <Loader2 className="w-6 h-6 text-zinc-500 animate-spin" />
         </div>
       )}
+      {state === 'deferred' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
+          <span className="text-xs text-zinc-500">
+            동시시청 제한으로 대기 중입니다
+            <span className="block mt-1 text-[10px] text-zinc-600">
+              한 화면에서 최대 {MAX_ACTIVE_STREAMS}개까지 불러옵니다
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={promote}
+            title="가장 오래된 방송을 끄고 이 방송을 불러오기"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-white/10 border border-white/15 text-zinc-200 hover:bg-white/20 hover:text-white transition-colors"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5" />
+            이 방송 대신 보기
+          </button>
+        </div>
+      )}
       {state === 'error' && (
-        <div className="absolute inset-0 flex items-center justify-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
           <span className="text-xs text-zinc-500">방송을 불러올 수 없습니다</span>
+          <button
+            type="button"
+            onClick={retry}
+            title="다시 불러오기"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-white/10 border border-white/15 text-zinc-200 hover:bg-white/20 hover:text-white transition-colors"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            다시 시도
+          </button>
         </div>
       )}
       {/* 스트리머 정보 */}
@@ -193,6 +250,32 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
   const [unmuteSignal, setUnmuteSignal] = useState(0);
   const liveMembers = group.members.filter((m) => statuses[m.key]?.is_live === true);
 
+  // 로드 순서를 보존해 "가장 오래된 방송"을 정확히 알 수 있게 한다.
+  // 앞쪽 MAX_ACTIVE_STREAMS개만 실제 로드하고 나머지는 대기시킨다.
+  const [activeKeys, setActiveKeys] = useState(() => liveMembers.slice(0, MAX_ACTIVE_STREAMS).map((m) => m.key));
+
+  // 방송 목록이 바뀌면(라이브 시작/종료) 슬롯을 다시 배정한다
+  useEffect(() => {
+    setActiveKeys((current) => {
+      const stillLive = new Set(liveMembers.map((m) => m.key));
+      const kept = current.filter((key) => stillLive.has(key));
+      const room = MAX_ACTIVE_STREAMS - kept.length;
+      if (room <= 0) return kept;
+      const added = liveMembers.map((m) => m.key).filter((key) => !kept.includes(key)).slice(0, room);
+      return [...kept, ...added];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMembers.map((m) => m.key).join(',')]);
+
+  const promote = (key) => {
+    setActiveKeys((current) => {
+      if (current.includes(key)) return current;
+      // 슬롯이 꽉 차면 가장 오래된 방송을 내리고 이 방송을 올린다
+      const next = [...current, key];
+      return next.slice(-MAX_ACTIVE_STREAMS);
+    });
+  };
+
   const toggleMute = (key) => {
     setUnmutedKeys((current) => {
       const next = new Set(current);
@@ -205,14 +288,15 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
     });
   };
 
-  const allUnmuted = liveMembers.length > 0 && liveMembers.every((member) => unmutedKeys.has(member.key));
+  const activeMembers = liveMembers.filter((m) => activeKeys.includes(m.key));
+  const allUnmuted = activeMembers.length > 0 && activeMembers.every((member) => unmutedKeys.has(member.key));
 
   const toggleAllMute = () => {
     if (allUnmuted) {
       setUnmutedKeys(new Set());
       return;
     }
-    setUnmutedKeys(new Set(liveMembers.map((member) => member.key)));
+    setUnmutedKeys(new Set(activeMembers.map((member) => member.key)));
     // 브라우저 자동재생 정책상 언뮤트는 사용자 제스처 안에서 play()로 해야 소리가 난다
     setUnmuteSignal((signal) => signal + 1);
   };
@@ -230,7 +314,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
         <div>
           <h2 className="text-base font-bold text-white leading-tight">{group.name} · 멀티뷰</h2>
           <p className="text-[11px] text-zinc-500">
-            방송 중 {liveMembers.length}개 · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
+            방송 중 {liveMembers.length}개 · 동시 불러오는 중 {activeMembers.length}개(최대 {MAX_ACTIVE_STREAMS}개) · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
           </p>
         </div>
         {liveMembers.length > 0 && (
@@ -263,6 +347,8 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
               member={member}
               statuses={statuses[member.key]}
               focused={focusedKey === member.key}
+              deferred={!activeKeys.includes(member.key)}
+              onPromote={promote}
               muted={!unmutedKeys.has(member.key)}
               unmuteSignal={unmuteSignal}
               onToggleMute={toggleMute}

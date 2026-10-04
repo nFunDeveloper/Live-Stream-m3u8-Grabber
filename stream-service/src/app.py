@@ -1,7 +1,7 @@
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, Response, redirect, request, stream_with_context
+from flask import Flask, Response, jsonify, redirect, request, stream_with_context
 from urllib.parse import parse_qs, urlparse
 
 from platform_modules.chzzk import Chzzk
@@ -47,6 +47,14 @@ auto_parsing_db = {
     'play.sooplive.com': ("soop", 1),
     'play.sooplive.co.kr': ("soop", 1)
 }
+
+
+def no_store(payload):
+    """m3u8 URL에는 만료 토큰이 들어 있어 브라우저가 캐시하면 재시도가 무의미해진다."""
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
 
 
 @app.route('/api/grab', methods=['GET'])
@@ -95,7 +103,7 @@ def grab_api():
                 return {"error": "Live stream not found or quality unsupported"}, 404
 
             logger.info("[grab] success m3u8_url=%s", info["m3u8_url"])
-            return {
+            return no_store({
                 "m3u8_url": info["m3u8_url"],
                 # 앱 안에서 재생할 때만 쓰는 프록시 경로. 복사/표시는 원본을 쓴다.
                 "playback_url": build_proxy_url(info["m3u8_url"]),
@@ -108,7 +116,7 @@ def grab_api():
                 "started_at": info.get("started_at") or "",
                 "viewers": info.get("viewers"),
                 "thumbnail": info.get("thumbnail") or "",
-            }
+            })
         except ValueError as e:
             logger.warning("[grab] invalid request: %s", e)
             return {"error": str(e)}, 400

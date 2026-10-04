@@ -285,6 +285,14 @@ class StreamProxyTests(unittest.TestCase):
         self.assertEqual(body["m3u8_url"], FAKE_INFO["m3u8_url"])
         self.assertTrue(body["playback_url"].startswith("/api/stream?u="))
 
+    def test_grab_disables_cache(self):
+        # m3u8 URL에는 만료 토큰이 있어, 캐시되면 재시도가 늘 옛 URL을 돌려준다
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform()}):
+            response = self.client.get(f"/api/grab?url={CHZZK_URL}&quality=auto")
+
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertEqual(response.get_json()["m3u8_url"], FAKE_INFO["m3u8_url"])
+
 
 def _fake_upstream(body, content_type="application/vnd.apple.mpegurl"):
     response = Mock()
