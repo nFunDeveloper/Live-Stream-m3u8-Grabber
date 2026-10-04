@@ -7,6 +7,8 @@ from urllib.parse import quote
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 import app as app_module
+import platform_health
+import stream_proxy
 
 
 CHZZK_URL = "https://chzzk.naver.com/live/test_channel"
@@ -292,6 +294,20 @@ class StreamProxyTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_sends_pandalive_referer_to_ivs_cdn(self):
+        # AWS IVS는 방송이 서 있는 사이트 Referer가 없으면 403으로 막는다
+        headers = stream_proxy._headers_for("https://abc.us-west-2.playback.live-video.net/api/video/v1/x.m3u8")
+        self.assertEqual(headers["Referer"], "https://www.pandalive.co.kr/")
+        self.assertEqual(headers["Origin"], "https://www.pandalive.co.kr")
+
+    def test_sends_soop_referer_to_soop_cdn(self):
+        headers = stream_proxy._headers_for("https://play.sooplive.com/abc/master.m3u8")
+        self.assertEqual(headers["Referer"], "https://play.sooplive.co.kr/")
+
+    def test_sends_no_referer_to_unknown_host(self):
+        headers = stream_proxy._headers_for("https://www.pandalive.co.kr/live")
+        self.assertNotIn("Referer", headers)
+
     def test_rewrites_playlist_segments_to_proxy(self):
         playlist = (
             "#EXTM3U\n"
@@ -369,6 +385,145 @@ def _fake_upstream(body, content_type="application/vnd.apple.mpegurl"):
     response.raw.read.return_value = body.encode("utf-8")
     response.iter_content.return_value = iter([body.encode("utf-8")])
     return response
+
+
+class PlatformHealthApiTests(unittest.TestCase):
+    """플랫폼 생존 확인이 '지금 스트림을 받을 수 있는가'를 그대로 답하는지 확인한다"""
+
+    def setUp(self):
+        self.client = app_module.app.test_client()
+        platform_health._cache.clear()
+
+    def tearDown(self):
+        platform_health._cache.clear()
+
+    def test_reports_ok_when_stream_is_fetchable(self):
+        chzzk = fake_platform(m3u8_url="https://livecloud.pstatic.net/ab/master.m3u8")
+        playlist = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n720p.m3u8\n"
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
+                patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
+            response = self.client.get("/api/platforms/health")
+
+        self.assertEqual(response.status_code, 200)
+        entry = response.get_json()["platforms"][0]
+        self.assertEqual(entry["platform"], "chzzk")
+        self.assertTrue(entry["ok"])
+        self.assertEqual(entry["reason"], "")
+
+    def test_marks_blocked_host_as_unavailable(self):
+        # 허용 목록에 없는 호스트면 브라우저에서 CORS로 막히므로 사용 불가로 본다
+        chzzk = fake_platform(m3u8_url="https://unknown-cdn.example.com/master.m3u8")
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]):
+            response = self.client.get("/api/platforms/health")
+
+        entry = response.get_json()["platforms"][0]
+        self.assertFalse(entry["ok"])
+        self.assertIn("차단", entry["reason"])
+
+    def test_marks_offline_when_no_stream_url(self):
+        chzzk = fake_platform(m3u8_url="")
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]):
+            response = self.client.get("/api/platforms/health")
+
+        entry = response.get_json()["platforms"][0]
+        self.assertFalse(entry["ok"])
+
+    def test_accepts_master_playlist_without_extinf(self):
+        # master에는 #EXTINF 대신 #EXT-X-STREAM-INF가 있다. 이걸 걸러내면 안 된다
+        chzzk = fake_platform(m3u8_url="https://livecloud.pstatic.net/ab/master.m3u8")
+        playlist = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720\n720p.m3u8\n"
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
+                patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
+            response = self.client.get("/api/platforms/health")
+
+        self.assertTrue(response.get_json()["platforms"][0]["ok"])
+
+    def test_one_working_candidate_is_enough(self):
+        # 후보 중 하나만 성공해도 그 플랫폼은 사용 가능한 것으로 본다
+        chzzk = fake_platform(m3u8_url="https://livecloud.pstatic.net/ab/master.m3u8")
+        playlist = "#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n"
+
+        def get_live(streamer_id, quality="auto"):
+            if streamer_id == "off":
+                return {"m3u8_url": ""}
+            return {"m3u8_url": "https://livecloud.pstatic.net/ab/master.m3u8"}
+
+        chzzk.get_live.side_effect = get_live
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["off", "on"]), \
+                patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
+            response = self.client.get("/api/platforms/health")
+
+        self.assertTrue(response.get_json()["platforms"][0]["ok"])
+
+    def test_omits_afreeca_alias(self):
+        # soop 과 afreeca 는 같은 플랫폼이라 두 번 보고하면 안 된다
+        with patch.dict(app_module.platforms, {"soop": fake_platform(), "afreeca": fake_platform()}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
+                patch.object(
+                    platform_health,
+                    "open_stream",
+                    return_value=_fake_upstream("#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n"),
+                ):
+            response = self.client.get("/api/platforms/health")
+
+        names = [item["platform"] for item in response.get_json()["platforms"]]
+        self.assertEqual(names, ["soop"])
+
+    def test_does_not_leak_signed_url_in_reason(self):
+        # 실패 사유에 서명된 URL이 그대로 실리면 응답이 통째로 새어나간다
+        chzzk = fake_platform(m3u8_url="https://livecloud.pstatic.net/ab/master.m3u8?token=SECRET")
+        with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
+                patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
+                patch.object(
+                    platform_health, "open_stream",
+                    side_effect=platform_health.ProxyError("403 for url=https://cdn.example.com/m.m3u8?token=SECRET"),
+                ):
+            response = self.client.get("/api/platforms/health")
+
+        entry = response.get_json()["platforms"][0]
+        self.assertFalse(entry["ok"])
+        self.assertNotIn("SECRET", entry["reason"])
+
+
+class PlatformHealthProbeTests(unittest.TestCase):
+    """health 조회가 살아 있는 방송 후보를 플랫폼마다 올바르게 고르는지 확인한다"""
+
+    def setUp(self):
+        platform_health._cache.clear()
+
+    def test_popkon_skips_adult_and_private_broadcasts(self):
+        class _Fake:
+            @staticmethod
+            def post(url, headers=None, json=None, timeout=None):
+                return Mock(
+                    raise_for_status=Mock(),
+                    json=Mock(return_value={"data": {"list": [
+                        {"signId": "adult", "partnerCode": "P-00001", "isAdult": 1, "isPrivate": 0},
+                        {"signId": "secret", "partnerCode": "P-00001", "isAdult": 0, "isPrivate": 1},
+                        {"signId": "ok", "partnerCode": "P-00117", "isAdult": 0, "isPrivate": 0},
+                    ]}}),
+                )
+
+        with patch.object(platform_health.requests, "post", _Fake.post):
+            keys = platform_health._sample_popkon()
+
+        # partnerCode 는 방송마다 다르므로 목록에서 그대로 가져와야 한다
+        self.assertEqual(keys, ["ok|P-00117"])
+
+    def test_search_platform_uses_search_results(self):
+        chzzk = Mock()
+        chzzk.search_lives.return_value = [
+            {"streamer_id": "aaa"}, {"streamer_id": "bbb"}, {"streamer_id": ""}
+        ]
+        ids = platform_health._sample_by_search(chzzk)
+
+        # streamer_id 가 비어 있는 항목은 제외된다
+        self.assertEqual(sorted(ids), ["aaa", "bbb"])
 
 
 if __name__ == "__main__":

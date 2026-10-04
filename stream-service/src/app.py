@@ -9,6 +9,7 @@ from platform_modules.cime import Cime
 from platform_modules.pandalive import Pandalive
 from platform_modules.popkon import Popkon
 from platform_modules.soop import Soop
+from platform_health import get_health
 from stream_proxy import (
     ProxyError,
     ProxyForbidden,
@@ -205,6 +206,18 @@ def stream_proxy_api():
         upstream.close()
         logger.exception("[stream] failed to proxy url=%s", target)
         return {"error": "Failed to proxy stream"}, 500
+
+
+@app.route('/api/platforms/health', methods=['GET'])
+def platforms_health_api():
+    """지금은 실제로 스트림을 받을 수 있는 플랫폼만 골라낸다."""
+    results = get_health(platforms, force=request.args.get('force') == '1')
+    return no_store({
+        'platforms': [
+            {'platform': name, 'ok': state['ok'], 'reason': state['reason']}
+            for name, state in results.items()
+        ]
+    })
 
 
 @app.route('/api/search', methods=['GET'])

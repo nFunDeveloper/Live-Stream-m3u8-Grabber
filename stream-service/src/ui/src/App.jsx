@@ -12,6 +12,7 @@ import Sidebar from './components/Sidebar.jsx';
 import PlayerPanel from './components/PlayerPanel.jsx';
 import SearchBar from './components/SearchBar.jsx';
 import MultiViewPanel from './components/MultiViewPanel.jsx';
+import PlatformHealthChips, { usePlatformHealth } from './components/PlatformHealthChips.jsx';
 import {
   loadHistory,
   recordHistory,
@@ -22,7 +23,7 @@ import {
   buildGroupMember,
   entryKey,
 } from './lib/storage.js';
-import { PLATFORM_META, platformMeta } from './lib/platforms.js';
+import { platformMeta } from './lib/platforms.js';
 import {
   QUALITY_OPTIONS,
   detectPlatform,
@@ -37,6 +38,8 @@ const STEPS = [
 ];
 
 function EmptyState() {
+  const { health, loading } = usePlatformHealth();
+
   return (
     <div className="w-full aspect-video max-h-[65vh] flex flex-col items-center justify-center gap-6 border border-dashed border-white/10 rounded-xl bg-white/[0.01] px-6 text-center">
       <div className="flex items-center gap-5 sm:gap-8">
@@ -52,22 +55,7 @@ function EmptyState() {
           </React.Fragment>
         ))}
       </div>
-      <div className="flex flex-col items-center gap-1.5">
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {Object.entries(PLATFORM_META).map(([key, meta]) => (
-            <span
-              key={key}
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/10 text-[10px] sm:text-xs text-zinc-300 font-medium"
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
-              {meta.label}
-            </span>
-          ))}
-        </div>
-        <p className="text-[11px] text-zinc-600">
-          방송 중인 채널의 URL을 입력하면 메타데이터와 함께 스트림이 추출됩니다
-        </p>
-      </div>
+      <PlatformHealthChips health={health} loading={loading} />
     </div>
   );
 }

@@ -30,6 +30,8 @@ ALLOWED_HOST_SUFFIXES = (
     'live-video.net',
     'pandalive.co.kr',
     'popkontv.com',
+    # 팝콘TV 스트림은 자사 도메인이 아니라 hscdn.com CDN으로 나간다
+    'hscdn.com',
 )
 
 USER_AGENT = (
@@ -80,11 +82,19 @@ def build_proxy_url(target_url):
 
 
 def _referer_for(url):
-    """SOOP CDN은 SOOP 플레이어 Referer가 있어야 응답한다."""
+    """CDN이 출처를 확인하면 그 출처를 Referer/Origin으로 함께 보낸다.
+
+    SOOP CDN은 SOOP 플레이어 Referer가 있어야 응답하고, 팬더라이브가 쓰는
+    AWS IVS도 방송이 서 있는 사이트 Referer가 없으면 403으로 막는다.
+    """
     parsed = urlparse(url)
     host = (parsed.hostname or '').lower()
     if host.endswith('sooplive.com') or host.endswith('sooplive.co.kr') or host.endswith('afreeca.tv'):
         return 'https://play.sooplive.co.kr/'
+    # ci.me도 같은 AWS IVS를 쓰지만 출처를 확인하지 않아 어느 Referer든 받는다.
+    # 그래서 여기로 들어온 IVS 요청에는 팬더라이브 Referer를 보내면 두 곳 모두 열린다.
+    if host.endswith('live-video.net'):
+        return 'https://www.pandalive.co.kr/'
     return None
 
 
@@ -93,9 +103,9 @@ def _headers_for(url, range_header=None):
     referer = _referer_for(url)
     if referer:
         headers['Referer'] = referer
-        headers['Origin'] = 'https://play.sooplive.co.kr'
+        headers['Origin'] = referer.rstrip('/')
     if range_header:
-        # 바이트 범위 요청은 그대로 전달해야 탐색 없이 이어재생된다
+        # 바이트 범위 요청은 그대로 전달해야 탐색 없이 이어 재생된다
         headers['Range'] = range_header
     return headers
 
