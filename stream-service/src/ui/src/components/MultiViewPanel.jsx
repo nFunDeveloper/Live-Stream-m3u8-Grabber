@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import Hls from 'hls.js';
 import { ChevronLeft, Loader2, Eye, Copy, Check, Volume2, VolumeX, RotateCw, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@heroui/react';
@@ -208,7 +208,13 @@ function MultiViewTile({
       .catch(() => {});
   };
 
-  const isLiveDot = statuses?.is_live === true;
+  // 상태를 아직 못 알아냈으면 방송이 끝난 게 아니므로 회색으로 둔다
+  const liveDotClass =
+    statuses?.is_live === true
+      ? 'bg-emerald-500 animate-pulse'
+      : statuses?.is_live === false
+        ? 'bg-red-500'
+        : 'bg-zinc-700';
 
   return (
     <div
@@ -270,9 +276,7 @@ function MultiViewTile({
       )}
       {/* 스트리머 정보 */}
       <div className="absolute top-2 left-2 flex items-center gap-1.5 min-w-0 max-w-[calc(100%-90px)]">
-        <span
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLiveDot ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}
-        />
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${liveDotClass}`} />
         <PlatformChip platform={member.platform} size="xs" />
         <span className="text-xs font-bold text-white truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
           {member.streamer_name || member.streamer_id}
@@ -346,24 +350,37 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
   // 켠 키만 기억하면 방송이 늦게 시작된 타일도 자동으로 음소거 상태를 유지한다.
   const [unmutedKeys, setUnmutedKeys] = useState(() => new Set());
   const [unmuteSignal, setUnmuteSignal] = useState(0);
-  const liveMembers = group.members.filter((m) => statuses[m.key]?.is_live === true);
+
+  // 방송 중이라고 확실히 확인된 채널만 잘라내지 않는다. 상태 확인이 아직
+  // 돌아오지 않았거나 플랫폼이 확인 기능을 제공하지 않는 경우
+  // (팬더라이브·팝콘TV) is_live 가 비어 있으므로, 그걸 오프라인으로
+  // 착각해 화면에서 사라지게 하면 안 된다. 사이드바도 같은 기준으로
+  // 배지를 숨기고 있을 뿐 채널 자체는 항상 보여준다.
+  const visibleMembers = useMemo(() => {
+    const shown = group.members.filter((m) => statuses[m.key]?.is_live !== false);
+    // 확실히 방송 중인 채널이 먼저 자리를 차지하도록 순서를 잡는다.
+    // 동시시청 슬롯이 모자라면 확인된 방송이 대기 채널로 밀려나면 안 된다.
+    const isConfirmed = (member) => (statuses[member.key]?.is_live === true ? 0 : 1);
+    return shown.sort((a, b) => isConfirmed(a) - isConfirmed(b));
+  }, [group.members, statuses]);
+  const confirmedLiveCount = visibleMembers.filter((m) => statuses[m.key]?.is_live === true).length;
 
   // 로드 순서를 보존해 "가장 오래된 방송"을 정확히 알 수 있게 한다.
   // 앞쪽 MAX_ACTIVE_STREAMS개만 실제 로드하고 나머지는 대기시킨다.
-  const [activeKeys, setActiveKeys] = useState(() => liveMembers.slice(0, MAX_ACTIVE_STREAMS).map((m) => m.key));
+  const [activeKeys, setActiveKeys] = useState(() => visibleMembers.slice(0, MAX_ACTIVE_STREAMS).map((m) => m.key));
 
   // 방송 목록이 바뀌면(라이브 시작/종료) 슬롯을 다시 배정한다
   useEffect(() => {
     setActiveKeys((current) => {
-      const stillLive = new Set(liveMembers.map((m) => m.key));
-      const kept = current.filter((key) => stillLive.has(key));
+      const stillVisible = new Set(visibleMembers.map((m) => m.key));
+      const kept = current.filter((key) => stillVisible.has(key));
       const room = MAX_ACTIVE_STREAMS - kept.length;
       if (room <= 0) return kept;
-      const added = liveMembers.map((m) => m.key).filter((key) => !kept.includes(key)).slice(0, room);
+      const added = visibleMembers.map((m) => m.key).filter((key) => !kept.includes(key)).slice(0, room);
       return [...kept, ...added];
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveMembers.map((m) => m.key).join(',')]);
+  }, [visibleMembers.map((m) => m.key).join(',')]);
 
   // 슬롯이 꽉 찼을 때 어떤 방송을 내릴지 고르는 대상
   const [swapTarget, setSwapTarget] = useState(null);
@@ -447,7 +464,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
     });
   };
 
-  const activeMembers = liveMembers.filter((m) => activeKeys.includes(m.key));
+  const activeMembers = visibleMembers.filter((m) => activeKeys.includes(m.key));
   const allUnmuted = activeMembers.length > 0 && activeMembers.every((member) => unmutedKeys.has(member.key));
 
   const toggleAllMute = () => {
@@ -473,10 +490,10 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
         <div>
           <h2 className="text-base font-bold text-white leading-tight">{group.name} · 멀티뷰</h2>
           <p className="text-[11px] text-zinc-500">
-            방송 중 {liveMembers.length}개 · 동시 불러오는 중 {activeMembers.length}개(최대 {MAX_ACTIVE_STREAMS}개) · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
+            그룹 {group.members.length}개 중 표시 {visibleMembers.length}개(방송 중 확인 {confirmedLiveCount}개) · 동시에 불러오는 중 {activeMembers.length}개(최대 {MAX_ACTIVE_STREAMS}개) · 타일을 클릭하면 크게 보고 다시 클릭하면 그리드로 돌아갑니다
           </p>
         </div>
-        {liveMembers.length > 0 && (
+        {visibleMembers.length > 0 && (
           <button
             type="button"
             onClick={toggleAllMute}
@@ -493,7 +510,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
         )}
       </div>
 
-      {liveMembers.length === 0 ? (
+      {visibleMembers.length === 0 ? (
         <div className="w-full aspect-video max-h-[65vh] flex flex-col items-center justify-center gap-2 border border-dashed border-white/10 rounded-xl bg-white/[0.01]">
           <p className="text-sm text-zinc-400">지금은 방송 중인 채널이 없습니다</p>
           <p className="text-[11px] text-zinc-600">그룹 멤버가 방송을 시작하면 이 화면에 함께 표시됩니다</p>
@@ -503,7 +520,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
           ref={gridRef}
           className={`grid gap-3 ${focusedKey ? 'grid-cols-2 lg:grid-cols-6' : 'sm:grid-cols-2 xl:grid-cols-3'}`}
         >
-          {liveMembers.map((member) => (
+          {visibleMembers.map((member) => (
             <MultiViewTile
               key={member.key}
               member={member}
@@ -536,7 +553,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
                 <p className="text-[11px] text-zinc-500 mt-0.5">
                   지금 불러오는 {MAX_ACTIVE_STREAMS}개 중 하나를 끄고{' '}
                   <span className="text-zinc-300">
-                    {liveMembers.find((m) => m.key === swapTarget)?.streamer_name || '이 방송'}
+                    {visibleMembers.find((m) => m.key === swapTarget)?.streamer_name || '이 방송'}
                   </span>
                   을(를) 불러옵니다.
                 </p>

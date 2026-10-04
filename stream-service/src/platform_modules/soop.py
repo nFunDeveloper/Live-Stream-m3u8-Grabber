@@ -82,7 +82,7 @@ class Soop(PlatformDefault):
             "streamer_name": self.first_of(data, "user_nick", "nick") or "",
             "category": self.first_of(data, "cate_name", "category_name") or "",
             "started_at": self.first_of(data, "broad_start", "broad_start_date") or "",
-            "viewers": data.get("broad_cnt") or data.get("viewer_cnt"),
+            "viewers": self.first_of(data, "view_cnt", "broad_cnt", "viewer_cnt"),
             "thumbnail": self.first_of(data, "broad_thumb", "broad_thumbnail") or "",
         }
 
@@ -131,6 +131,21 @@ class Soop(PlatformDefault):
         info["m3u8_url"] = broad_url["view_url"] + f"?aid={auth_key}"
         logger.info("[soop] m3u8_url=%s", info["m3u8_url"])
         return info
+
+    def check_status(self, streamer_id):
+        broadcast_info = self.__get_soop_broadcast_info(streamer_id, self.headers)
+        data = broadcast_info.get("data") or {}
+        # 방송이 없으면 result 가 -1 이고, 방송 중이면 1 이다.
+        # 일시정지된 방송도 result 가 1 이므로 상태 문자열까지 함께 본다.
+        is_live = (
+            broadcast_info.get("result") == 1
+            and data.get("broad_status") == "BROADING"
+        )
+        return {
+            'is_live': is_live,
+            'viewers': self.__to_int(data.get("view_cnt")) if is_live else None,
+            'title': (data.get("broad_title") or '') if is_live else '',
+        }
 
     def search_lives(self, keyword, limit=8):
         # SOOP 검색은 두 API를 함께 쓴다.

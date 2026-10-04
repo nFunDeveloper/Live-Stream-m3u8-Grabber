@@ -128,6 +128,11 @@ function App() {
     }
     if (typeof forcedUrl === 'string') setUrl(forcedUrl);
 
+    // 사이드바나 검색에서 방송을 고르면 한 화면 재생으로 넘어간다.
+    // 멀티뷰를 열어둔 채로면 추출 결과가 화면에 렌더링되지 않아 아무 일도
+    // 일어나지 않은 것처럼 보인다.
+    setMultiViewGroupId(null);
+
     setLoading(true);
     setError('');
 

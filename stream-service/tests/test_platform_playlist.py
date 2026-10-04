@@ -300,6 +300,63 @@ class SoopSearchTests(unittest.TestCase):
         self.assertEqual([item['streamer_id'] for item in results], ['one', 'two'])
 
 
+class SoopStatusTests(unittest.TestCase):
+    """SOOP 방송 상태 확인 동작을 확인한다"""
+
+    @staticmethod
+    def _fake_requests(payload):
+        class _Fake:
+            def post(self, url, headers=None, data=None, timeout=None):
+                return FakeResponse(payload)
+
+        return _Fake()
+
+    def _check(self, payload):
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        fake = self._fake_requests(payload)
+        with patch.object(soop_module, 'requests', fake):
+            return soop_module.Soop().check_status('b13246')
+
+    def test_reports_live_with_viewers_and_title(self):
+        status = self._check({"result": 1, "data": {
+            "broad_status": "BROADING",
+            "broad_title": "엘든링 밤의통치자",
+            "view_cnt": 5066,
+        }})
+
+        self.assertEqual(status, {
+            'is_live': True,
+            'viewers': 5066,
+            'title': '엘든링 밤의통치자',
+        })
+
+    def test_reports_offline_when_no_broadcast(self):
+        # 방송이 없는 채널도 data 안에 user_nick 만 담아 돌아온다
+        status = self._check({"result": -1, "data": {"user_nick": "[KU]윤아"}})
+
+        self.assertEqual(status, {'is_live': False, 'viewers': None, 'title': ''})
+
+    def test_paused_broadcast_is_not_live(self):
+        # 일시정지된 방송도 result 가 1 이라 상태 문자열까지 같이 봐야 한다
+        status = self._check({"result": 1, "data": {
+            "broad_status": "PAUSED",
+            "broad_title": "일시정지",
+            "view_cnt": 12,
+        }})
+
+        self.assertEqual(status, {'is_live': False, 'viewers': None, 'title': ''})
+
+    def test_viewer_count_is_parsed_when_not_a_number(self):
+        status = self._check({"result": 1, "data": {
+            "broad_status": "BROADING",
+            "view_cnt": "1,234",
+        }})
+
+        self.assertEqual(status['viewers'], 1234)
+
+
 class SoopTests(unittest.TestCase):
     """SOOP는 .co.kr CNAME이 끊겨 있어 .com 으로 폴백해야 한다"""
 
