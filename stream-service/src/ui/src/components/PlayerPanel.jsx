@@ -7,6 +7,7 @@ import {
   CalendarClock,
   Eye,
   Maximize2,
+  RotateCw,
 } from 'lucide-react';
 import { Tooltip, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { platformMeta, formatViewers } from '../lib/platforms.js';
@@ -25,6 +26,8 @@ export default function PlayerPanel({ result, showToast }) {
   const [playbackError, setPlaybackError] = useState('');
   const [copied, setCopied] = useState(false);
   const [urlModalOpen, setUrlModalOpen] = useState(false);
+  // 재생 실패 시 스트림을 처음부터 다시 잡기 위한 신호
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
 
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
@@ -54,11 +57,26 @@ export default function PlayerPanel({ result, showToast }) {
     const video = videoRef.current;
     setPlaybackError('');
 
-    const showPlaybackError = () => {
-      setPlaybackError('스트림 서버 응답이 지연되거나 방송이 종료되었을 수 있습니다. 잠시 후 다시 시도하거나, 복사 버튼으로 URL을 복사해 전용 플레이어에서 확인해주세요.');
+    // manifest 파싱만으로는 준비된 게 아니다. 실제 프레임이 그려질 때까지 기다리고,
+    // 그전에 끊기면 오류로 알려야 사용자가 재시도할 수 있다.
+    let settled = false;
+    const settleError = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(frameTimer);
+      showPlaybackError();
     };
+    const settleReady = () => {
+      if (settled || video.videoWidth === 0) return;
+      settled = true;
+      clearTimeout(frameTimer);
+      setPlaybackError('');
+    };
+    const frameTimer = setTimeout(settleError, 30000);
+    video.addEventListener('loadeddata', settleReady);
+    video.addEventListener('playing', settleReady);
 
-    video.addEventListener('error', showPlaybackError);
+    video.addEventListener('error', settleError);
 
     if (Hls.isSupported()) {
       const hls = new Hls({
@@ -69,23 +87,28 @@ export default function PlayerPanel({ result, showToast }) {
       hls.loadSource(playbackUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setPlaybackError('');
+        settleReady();
         video.play().catch((e) => console.log('Auto-play blocked or failed', e));
       });
       hls.on(Hls.Events.ERROR, function (event, data) {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              showPlaybackError();
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
+        if (!data.fatal) return;
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            // 재시도 몇 번으로 살릴 수 있으면 살리고, 그래도 안 되면 오류로 알린다
+            if (data.errorCount && data.errorCount > 3) {
+              settleError();
               hls.destroy();
               break;
-          }
+            }
+            hls.startLoad();
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            hls.recoverMediaError();
+            break;
+          default:
+            settleError();
+            hls.destroy();
+            break;
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -96,13 +119,16 @@ export default function PlayerPanel({ result, showToast }) {
     }
 
     return () => {
+      clearTimeout(frameTimer);
+      video.removeEventListener('loadeddata', settleReady);
+      video.removeEventListener('playing', settleReady);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-      video.removeEventListener('error', showPlaybackError);
+      video.removeEventListener('error', settleError);
     };
-  }, [playbackUrl]);
+  }, [playbackUrl, playbackAttempt]);
 
   const copyToClipboard = () => {
     if (!m3u8Url) return;
@@ -142,6 +168,14 @@ export default function PlayerPanel({ result, showToast }) {
               </div>
               <h4 className="mb-2 text-sm font-semibold text-amber-100 sm:text-base">재생이 차단되었습니다</h4>
               <p className="text-xs leading-relaxed text-amber-100/80 sm:text-sm">{playbackError}</p>
+              <button
+                type="button"
+                onClick={() => setPlaybackAttempt((n) => n + 1)}
+                className="mt-4 inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium bg-amber-400/15 border border-amber-300/30 text-amber-100 hover:bg-amber-400/25 transition-colors"
+              >
+                <RotateCw className="w-4 h-4" />
+                다시 시도
+              </button>
             </div>
           </div>
         )}

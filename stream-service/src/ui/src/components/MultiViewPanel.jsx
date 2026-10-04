@@ -8,6 +8,11 @@ import { formatViewers } from '../lib/platforms.js';
 // 치지직은 동시시청 스트림을 5개까지만 허용한다. 넘으면 추가 로드는 실패한다.
 const MAX_ACTIVE_STREAMS = 5;
 
+// 동시에 여러 개를 불러오면 느려질 수 있다. 시간이 지나면 실패로 바꿔
+// 사용자가 재시도할 수 있게 한다 (무한 로딩 방지).
+const GRAB_TIMEOUT_MS = 20000;
+const FIRST_FRAME_TIMEOUT_MS = 30000;
+
 function MultiViewTile({
   member, statuses, focused, muted, unmuteSignal,
   deferred, onPromote, onToggleMute, onTileClick,
@@ -38,6 +43,21 @@ function MultiViewTile({
 
     const load = async () => {
       setState('loading');
+      // 무한 로딩 방지 — grab이 멈추거나 첫 프레임이 안 오면 실패로 전환한다
+      let settled = false;
+      const fail = () => {
+        if (cancelled || settled) return;
+        settled = true;
+        clearTimeout(grabTimer);
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        setState('error');
+      };
+      const grabTimer = setTimeout(fail, GRAB_TIMEOUT_MS);
+      let frameTimer = null;
+
       // 항상 새 URL을 추출한다 — 저장된 m3u8은 만료되었을 수 있다
       try {
         const response = await fetch(`/api/grab?url=${encodeURIComponent(member.url)}&quality=auto`);
@@ -51,39 +71,66 @@ function MultiViewTile({
         // 재생은 프록시를, 복사는 원본 주소를 쓴다
         const playbackUrl = data.playback_url || data.m3u8_url;
         setViewers(data.viewers ?? null);
+        clearTimeout(grabTimer);
 
         const video = videoRef.current;
-        if (!video) return;
+        if (!video) {
+          fail();
+          return;
+        }
+
+        // manifest만 파싱되고 세그먼트가 안 오면 영영 검은 화면으로 남는다
+        frameTimer = setTimeout(fail, FIRST_FRAME_TIMEOUT_MS);
+
+        // manifest 파싱은 재생 준비가 아니다. 실제로 픽셀이 그려질 때만 ready로 본다.
+        const markReady = () => {
+          if (cancelled || settled) return;
+          settled = true;
+          clearTimeout(frameTimer);
+          setState('ready');
+          video.play().catch(() => {});
+        };
+        const waitForFrame = () => {
+          // videoWidth가 잡히면 실제 프레임이 들어온 것이다
+          if (video.videoWidth > 0) markReady();
+        };
+        video.addEventListener('loadeddata', waitForFrame);
+        video.addEventListener('playing', waitForFrame);
+        if (video.readyState >= 2) waitForFrame();
+
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
           hlsRef.current = hls;
           hls.loadSource(playbackUrl);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (cancelled) return;
-            setState('ready');
-            video.play().catch(() => {});
+            if (cancelled || settled) return;
+            // 파싱만으로는 준비된 게 아니므로 waitForFrame이 실제 프레임을 기다린다
+            waitForFrame();
           });
           hls.on(Hls.Events.ERROR, (event, d) => {
-            if (!cancelled && d.fatal && d.type === Hls.ErrorTypes.NETWORK_ERROR) setState('error');
+            if (cancelled || !d.fatal) return;
+            // 치지직 동시시청 초과 등은 NETWORK_ERROR뿐 아니라 MEDIA_ERROR로도
+            // 올라오기 때문에 타입을 가리지 않고 실패로 처리한다
+            fail();
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl;
-          video.addEventListener('loadedmetadata', () => {
-            if (!cancelled) setState('ready');
-          });
+          video.addEventListener('error', fail);
           video.play().catch(() => {});
         } else {
-          setState('error');
+          fail();
         }
       } catch {
-        if (!cancelled) setState('error');
+        clearTimeout(grabTimer);
+        fail();
       }
     };
 
     load();
     return () => {
       cancelled = true;
+      if (frameTimer) clearTimeout(frameTimer);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
