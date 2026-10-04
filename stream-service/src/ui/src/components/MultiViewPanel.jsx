@@ -245,7 +245,7 @@ function MultiViewTile({
           <button
             type="button"
             onClick={promote}
-            title="가장 오래된 방송을 끄고 이 방송을 불러오기"
+            title="끄고 싶은 방송을 고른 뒤 이 방송을 불러오기"
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-white/10 border border-white/15 text-zinc-200 hover:bg-white/20 hover:text-white transition-colors"
           >
             <ArrowRightLeft className="w-3.5 h-3.5" />
@@ -353,13 +353,27 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMembers.map((m) => m.key).join(',')]);
 
+  // 슬롯이 꽉 찼을 때 어떤 방송을 내릴지 고르는 대상
+  const [swapTarget, setSwapTarget] = useState(null);
+
   const promote = (key) => {
+    // 이미 불러오는 중이면 그대로 둔다
+    if (activeKeys.includes(key)) return;
+    // 빈 슬롯이 있으면 바로 올리고, 꽉 찼다면 먼저 끊을 방송을 고르게 한다
+    if (activeKeys.length < MAX_ACTIVE_STREAMS) {
+      setActiveKeys((current) => (current.includes(key) ? current : [...current, key]));
+      return;
+    }
+    setSwapTarget(key);
+  };
+
+  // 고른 방송을 끄고 대기 중이던 방송을 올린다
+  const confirmSwap = (evictKey) => {
     setActiveKeys((current) => {
-      if (current.includes(key)) return current;
-      // 슬롯이 꽉 차면 가장 오래된 방송을 내리고 이 방송을 올린다
-      const next = [...current, key];
-      return next.slice(-MAX_ACTIVE_STREAMS);
+      const kept = current.filter((key) => key !== evictKey);
+      return swapTarget && !kept.includes(swapTarget) ? [...kept, swapTarget] : kept;
     });
+    setSwapTarget(null);
   };
 
   const toggleMute = (key) => {
@@ -441,6 +455,55 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
               onTileClick={(key) => setFocusedKey((current) => (current === key ? null : key))}
             />
           ))}
+        </div>
+      )}
+
+      {swapTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          onClick={() => setSwapTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-white/10 bg-[#0f0f11]/95 p-4 shadow-2xl animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-2 mb-1">
+              <ArrowRightLeft className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-bold text-white">어떤 방송을 끌까요?</h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  지금 불러오는 {MAX_ACTIVE_STREAMS}개 중 하나를 끄고{' '}
+                  <span className="text-zinc-300">
+                    {liveMembers.find((m) => m.key === swapTarget)?.streamer_name || '이 방송'}
+                  </span>
+                  을(를) 불러옵니다.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 mt-3">
+              {activeMembers.map((member) => (
+                <button
+                  key={member.key}
+                  type="button"
+                  onClick={() => confirmSwap(member.key)}
+                  className="flex items-center gap-2 w-full px-3 h-10 rounded-lg text-left bg-white/5 border border-white/10 hover:bg-white/15 hover:border-white/25 transition-colors"
+                >
+                  <PlatformChip platform={member.platform} size="xs" />
+                  <span className="text-xs font-medium text-zinc-200 truncate">
+                    {member.streamer_name || member.streamer_id}
+                  </span>
+                  <span className="ml-auto text-[11px] text-zinc-500 shrink-0">끄기</span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSwapTarget(null)}
+              className="w-full mt-3 h-9 rounded-lg text-xs font-medium bg-white/5 border border-white/10 text-zinc-300 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              취소
+            </button>
+          </div>
         </div>
       )}
     </div>
