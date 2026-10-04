@@ -1,7 +1,7 @@
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, redirect, request
+from flask import Flask, Response, redirect, request, stream_with_context
 from urllib.parse import parse_qs, urlparse
 
 from platform_modules.chzzk import Chzzk
@@ -9,6 +9,14 @@ from platform_modules.cime import Cime
 from platform_modules.pandalive import Pandalive
 from platform_modules.popkon import Popkon
 from platform_modules.soop import Soop
+from stream_proxy import (
+    ProxyError,
+    ProxyForbidden,
+    build_proxy_url,
+    is_probably_playlist,
+    open_stream,
+    read_playlist,
+)
 
 app = Flask(__name__)
 logging.basicConfig(
@@ -89,6 +97,8 @@ def grab_api():
             logger.info("[grab] success m3u8_url=%s", info["m3u8_url"])
             return {
                 "m3u8_url": info["m3u8_url"],
+                # 앱 안에서 재생할 때만 쓰는 프록시 경로. 복사/표시는 원본을 쓴다.
+                "playback_url": build_proxy_url(info["m3u8_url"]),
                 "platform": platform_name,
                 "streamer_id": streamer_id,
                 "quality": quality,
@@ -111,6 +121,75 @@ def grab_api():
 
     logger.warning("[grab] unsupported hostname=%s", parsed_url.hostname)
     return {"error": "Unsupported platform or invalid URL"}, 400
+
+
+def _segment_content_type(target):
+    """세그먼트 응답에 쓸 Content-Type. 확장자를 기준으로 결정한다."""
+    path = urlparse(target).path.lower()
+    if path.endswith('.ts'):
+        return 'video/mp2t'
+    if path.endswith('.m4s') or path.endswith('.m4v') or path.endswith('.mp4'):
+        return 'video/mp4'
+    return 'application/octet-stream'
+
+
+@app.route('/api/stream', methods=['GET'])
+def stream_proxy_api():
+    """CORS에 막힌 플랫폼의 플레이리스트/세그먼트를 대신 받아준다.
+
+    복사 버튼이 주는 원본 URL은 그대로 두고, 앱 안에서 재생할 때만 이 경로를 쓴다.
+    """
+    target = request.args.get('u')
+    if not target:
+        return {"error": "u parameter is required"}, 400
+
+    try:
+        upstream = open_stream(target, range_header=request.headers.get('Range'))
+    except ProxyForbidden:
+        logger.warning("[stream] rejected host url=%s", target)
+        return {"error": "Host is not allowed"}, 403
+    except ProxyError as e:
+        logger.warning("[stream] upstream failed url=%s error=%s", target, e)
+        return {"error": "Upstream request failed"}, 502
+
+    content_type = upstream.headers.get('Content-Type', '')
+    try:
+        if not is_probably_playlist(
+            target, content_type, upstream.headers.get('Content-Length')
+        ):
+            # 세그먼트는 재작성할 게 없으므로 그대로 흘려보낸다.
+            # SOOP은 세그먼트에도 m3u8 타입을 주므로 그대로 넘기면 브라우저가
+            # 재생목록으로 오해하므로 실제 확장자에 맞는 타입으로 바꿔준다.
+            def generate():
+                try:
+                    yield from upstream.iter_content(chunk_size=64 * 1024)
+                finally:
+                    upstream.close()
+
+            response = Response(
+                stream_with_context(generate()),
+                status=upstream.status_code,
+                content_type=_segment_content_type(target),
+            )
+            length = upstream.headers.get('Content-Length')
+            if length:
+                response.headers['Content-Length'] = length
+            content_range = upstream.headers.get('Content-Range')
+            if content_range:
+                response.headers['Content-Range'] = content_range
+            return response
+
+        playlist = read_playlist(upstream, target)
+        upstream.close()
+        return Response(playlist, content_type='application/vnd.apple.mpegurl')
+    except ProxyError as e:
+        upstream.close()
+        logger.warning("[stream] playlist read failed url=%s error=%s", target, e)
+        return {"error": str(e)}, 502
+    except Exception:
+        upstream.close()
+        logger.exception("[stream] failed to proxy url=%s", target)
+        return {"error": "Failed to proxy stream"}, 500
 
 
 @app.route('/api/search', methods=['GET'])

@@ -32,6 +32,8 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
           return;
         }
         setFreshUrl(data.m3u8_url);
+        // 재생은 프록시를, 복사는 원본 주소를 쓴다
+        const playbackUrl = data.playback_url || data.m3u8_url;
         setViewers(data.viewers ?? null);
 
         const video = videoRef.current;
@@ -39,7 +41,7 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
         if (Hls.isSupported()) {
           const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
           hlsRef.current = hls;
-          hls.loadSource(data.m3u8_url);
+          hls.loadSource(playbackUrl);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (cancelled) return;
@@ -50,7 +52,7 @@ function MultiViewTile({ member, statuses, focused, muted, unmuteSignal, onToggl
             if (!cancelled && d.fatal && d.type === Hls.ErrorTypes.NETWORK_ERROR) setState('error');
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = data.m3u8_url;
+          video.src = playbackUrl;
           video.addEventListener('loadedmetadata', () => {
             if (!cancelled) setState('ready');
           });

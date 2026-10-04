@@ -30,7 +30,9 @@ export default function PlayerPanel({ result, showToast }) {
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
 
+  // 재생은 CORS 우회용 프록시를, 복사/표시는 원본 주소를 쓴다
   const m3u8Url = result.m3u8_url;
+  const playbackUrl = result.playback_url || m3u8Url;
   const meta = platformMeta(result.platform);
   const viewers = formatViewers(result.viewers);
 
@@ -42,7 +44,7 @@ export default function PlayerPanel({ result, showToast }) {
 
   // Hls 비디오 재생 처리
   useEffect(() => {
-    if (!m3u8Url || !videoRef.current) return;
+    if (!playbackUrl || !videoRef.current) return;
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -53,7 +55,7 @@ export default function PlayerPanel({ result, showToast }) {
     setPlaybackError('');
 
     const showPlaybackError = () => {
-      setPlaybackError('브라우저 보안 정책(CORS) 또는 스트림 서버 제한으로 재생이 차단되었습니다. 복사 버튼으로 URL을 복사해 전용 플레이어에서 확인해주세요.');
+      setPlaybackError('스트림 서버 응답이 지연되거나 방송이 종료되었을 수 있습니다. 잠시 후 다시 시도하거나, 복사 버튼으로 URL을 복사해 전용 플레이어에서 확인해주세요.');
     };
 
     video.addEventListener('error', showPlaybackError);
@@ -64,7 +66,7 @@ export default function PlayerPanel({ result, showToast }) {
         lowLatencyMode: true,
       });
       hlsRef.current = hls;
-      hls.loadSource(m3u8Url);
+      hls.loadSource(playbackUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setPlaybackError('');
@@ -87,7 +89,7 @@ export default function PlayerPanel({ result, showToast }) {
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = m3u8Url;
+      video.src = playbackUrl;
       video.addEventListener('loadedmetadata', () => {
         video.play().catch((e) => console.log('Auto-play blocked or failed', e));
       });
@@ -100,7 +102,7 @@ export default function PlayerPanel({ result, showToast }) {
       }
       video.removeEventListener('error', showPlaybackError);
     };
-  }, [m3u8Url]);
+  }, [playbackUrl]);
 
   const copyToClipboard = () => {
     if (!m3u8Url) return;

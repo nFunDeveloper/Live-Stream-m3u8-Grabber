@@ -223,5 +223,78 @@ class StatusApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()["statuses"], [])
 
 
+class StreamProxyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app_module.app.test_client()
+
+    def test_missing_url_returns_400(self):
+        self.assertEqual(self.client.get("/api/stream").status_code, 400)
+
+    def test_rejects_host_outside_allowlist(self):
+        # 허용 목록 밖 호스트를 프록시하면 오픈 프록시가 된다
+        response = self.client.get("/api/stream?u=https://example.com/master.m3u8")
+        self.assertEqual(response.status_code, 403)
+
+    def test_rejects_non_http_scheme(self):
+        response = self.client.get("/api/stream?u=file:///etc/passwd")
+        self.assertEqual(response.status_code, 403)
+
+    def test_rewrites_playlist_segments_to_proxy(self):
+        playlist = (
+            "#EXTM3U\n"
+            "#EXT-X-TARGETDURATION:2\n"
+            "#EXT-X-MAP:URI=\"init.m4s\"\n"
+            "#EXTINF:2.0,\n"
+            "seg0.ts\n"
+        )
+
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = _fake_upstream(playlist)
+            response = self.client.get(
+                "/api/stream?u=https://mobile-web.stream.sooplive.com/live/x/auth_playlist.m3u8"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("/api/stream?u=", body)
+        # 상대경로 세그먼트가 프록시 경로로 바뀌어야 hls.js가 우리 origin을 탄다
+        self.assertNotIn("\nseg0.ts", body)
+        self.assertIn("init.m4s", body)
+
+    def test_passes_segment_through_without_rewriting(self):
+        # SOOP은 세그먼트(.TS)에도 m3u8 Content-Type을 주므로 재작성 대상이 아니다
+        upstream = _fake_upstream("binary", content_type="application/vnd.apple.mpegurl")
+
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = upstream
+            response = self.client.get(
+                "/api/stream?u=https://mobile-web.stream.sooplive.com/live/x/seg0.ts"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "video/mp2t")
+        self.assertEqual(response.get_data(), b"binary")
+
+    def test_grab_returns_playback_url_for_proxy(self):
+        with patch.dict(app_module.platforms, {"chzzk": fake_platform()}):
+            response = self.client.get(f"/api/grab?url={CHZZK_URL}&quality=auto")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        # 복사 대상은 원본, 재생 대상은 프록시 주소여야 한다
+        self.assertEqual(body["m3u8_url"], FAKE_INFO["m3u8_url"])
+        self.assertTrue(body["playback_url"].startswith("/api/stream?u="))
+
+
+def _fake_upstream(body, content_type="application/vnd.apple.mpegurl"):
+    response = Mock()
+    response.headers = {"Content-Type": content_type, "Content-Length": str(len(body))}
+    response.status_code = 200
+    response.raw = Mock()
+    response.raw.read.return_value = body.encode("utf-8")
+    response.iter_content.return_value = iter([body.encode("utf-8")])
+    return response
+
+
 if __name__ == "__main__":
     unittest.main()
