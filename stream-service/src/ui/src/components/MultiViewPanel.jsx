@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import { ChevronLeft, Loader2, Eye, Copy, Check, Volume2, VolumeX, RotateCw, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@heroui/react';
@@ -212,9 +212,10 @@ function MultiViewTile({
 
   return (
     <div
-      className={`relative aspect-video rounded-xl overflow-hidden border bg-black/70 group cursor-pointer transition-colors ${
+      data-tile={member.key}
+      className={`relative aspect-video rounded-xl overflow-hidden border bg-black/70 group cursor-pointer ${
         focused
-          ? 'col-span-full order-first max-h-[70vh] border-white/25 hover:border-white/40'
+          ? 'col-span-full order-first max-h-[70vh] border-white/25 shadow-2xl shadow-black/50'
           : 'border-white/10 hover:border-white/25'
       }`}
       onClick={() => onTileClick(member.key)}
@@ -328,6 +329,17 @@ function MultiViewTile({
   );
 }
 
+// 확대/축소를 자연스럽게 보이게 하려고 상태 변경 전 타일 위치를 기억하고,
+// DOM이 바뀐 뒤 이전 위치에서 새 위치로 미끄러지듯 움직인다 (FLIP).
+const TRANSITION_MS = 360;
+const TRANSITION_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export default function MultiViewPanel({ group, statuses, onClose }) {
   const [focusedKey, setFocusedKey] = useState(null);
   // 여러 영상이 동시에 소리를 내면 서로 들리므로 기본은 전부 음소거한다.
@@ -355,6 +367,53 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
 
   // 슬롯이 꽉 찼을 때 어떤 방송을 내릴지 고르는 대상
   const [swapTarget, setSwapTarget] = useState(null);
+
+  const gridRef = useRef(null);
+  // 확대/축소 애니메이션용. 상태 변경 전 타일 위치를 담아두고 다음 렌더에서 되돌린다
+  const pendingRectsRef = useRef(null);
+
+  const captureRects = () => {
+    if (!gridRef.current || prefersReducedMotion()) return;
+    const rects = new Map();
+    gridRef.current.querySelectorAll('[data-tile]').forEach((el) => {
+      rects.set(el.dataset.tile, el.getBoundingClientRect());
+    });
+    pendingRectsRef.current = rects;
+  };
+
+  // DOM이 바뀐 뒤 이전 위치에서 새 위치로 움직이게 한다
+  useLayoutEffect(() => {
+    const before = pendingRectsRef.current;
+    pendingRectsRef.current = null;
+    if (!before || !gridRef.current || prefersReducedMotion()) return;
+
+    gridRef.current.querySelectorAll('[data-tile]').forEach((el) => {
+      const prev = before.get(el.dataset.tile);
+      const next = el.getBoundingClientRect();
+      if (!prev || !next.width || !prev.width) return;
+
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      const sx = prev.width / next.width;
+      const sy = prev.height / next.height;
+      // 위치와 크기가 그대로면 애니메이션할 필요가 없다
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01) return;
+
+      el.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+          { transform: 'translate(0, 0) scale(1, 1)' },
+        ],
+        { duration: TRANSITION_MS, easing: TRANSITION_EASING },
+      );
+    });
+  });
+
+  const toggleFocus = (key) => {
+    // 확대되는 타일과 나머지 타일이 함께 움직이도록 이전 위치를 먼저 기록한다
+    captureRects();
+    setFocusedKey((current) => (current === key ? null : key));
+  };
 
   const promote = (key) => {
     // 이미 불러오는 중이면 그대로 둔다
@@ -440,7 +499,10 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
           <p className="text-[11px] text-zinc-600">그룹 멤버가 방송을 시작하면 이 화면에 함께 표시됩니다</p>
         </div>
       ) : (
-        <div className={`grid gap-3 ${focusedKey ? 'grid-cols-2 lg:grid-cols-6' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
+        <div
+          ref={gridRef}
+          className={`grid gap-3 ${focusedKey ? 'grid-cols-2 lg:grid-cols-6' : 'sm:grid-cols-2 xl:grid-cols-3'}`}
+        >
           {liveMembers.map((member) => (
             <MultiViewTile
               key={member.key}
@@ -452,7 +514,7 @@ export default function MultiViewPanel({ group, statuses, onClose }) {
               muted={!unmutedKeys.has(member.key)}
               unmuteSignal={unmuteSignal}
               onToggleMute={toggleMute}
-              onTileClick={(key) => setFocusedKey((current) => (current === key ? null : key))}
+              onTileClick={toggleFocus}
             />
           ))}
         </div>
