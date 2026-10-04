@@ -21,6 +21,9 @@ ALLOWED_HOST_SUFFIXES = (
     'naver.com',
     'pstatic.net',
     'navercorp.com',
+    # 치지직은 같은 방송도 CDN을 갈아타며 경로를 돌려준다. navercdn.com은
+    # 그중 하나라 허용 목록에 없으면 "Host is not allowed"로 거절된다.
+    'navercdn.com',
     'ci.me',
     'pandalive.co.kr',
     'popkontv.com',

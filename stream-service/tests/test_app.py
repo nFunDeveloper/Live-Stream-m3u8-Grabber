@@ -239,6 +239,21 @@ class StreamProxyTests(unittest.TestCase):
         response = self.client.get("/api/stream?u=file:///etc/passwd")
         self.assertEqual(response.status_code, 403)
 
+    def test_allows_chzzk_navercdn_cdn(self):
+        # 치지직은 같은 방송도 CDN을 갈아타며 경로를 돌려준다. 이 호스트가
+        # 빠져 있으면 재생이 "Host is not allowed"로 실패한다.
+        playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n"
+
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = _fake_upstream(playlist)
+            response = self.client.get(
+                "/api/stream?u=https://ex-nlive-streaming.navercdn.com/chzzk/lip2_kr/"
+                "cflexnmss2u0006/abc/xyz_playlist.m3u8?hdnts=st=1~exp=2"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/api/stream?u=", response.get_data(as_text=True))
+
     def test_rewrites_playlist_segments_to_proxy(self):
         playlist = (
             "#EXTM3U\n"
