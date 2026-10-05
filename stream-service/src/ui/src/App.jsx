@@ -7,6 +7,7 @@ import {
   Download,
   MonitorPlay,
   Check,
+  Lock,
 } from 'lucide-react';
 import Sidebar from './components/Sidebar.jsx';
 import PlayerPanel from './components/PlayerPanel.jsx';
@@ -24,6 +25,7 @@ import {
   entryKey,
 } from './lib/storage.js';
 import { platformMeta } from './lib/platforms.js';
+import { requestLock } from './lib/lock.js';
 import {
   QUALITY_OPTIONS,
   detectPlatform,
@@ -407,6 +409,15 @@ function App() {
           <div className="flex-1 min-w-0 max-w-xl ml-auto">
             <SearchBar onPick={(item) => handleGrab(null, item.url)} />
           </div>
+          <button
+            type="button"
+            onClick={requestLock}
+            title="잠금 — 인증번호를 다시 입력해야 합니다"
+            aria-label="앱 잠그기"
+            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
         </header>
 
         <div className="w-full px-4 sm:px-6 py-6 flex flex-col gap-5 my-auto">

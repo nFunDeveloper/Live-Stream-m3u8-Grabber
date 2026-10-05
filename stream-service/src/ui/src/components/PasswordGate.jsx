@@ -2,16 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@heroui/react';
 import { Lock, Loader2 } from 'lucide-react';
 import { checkSession, fetchChallenge, login } from '../lib/auth.js';
+import { LOCK_EVENT } from '../lib/lock.js';
 import PinInput, { PIN_LENGTH } from './PinInput.jsx';
 
 const EMPTY = Array(PIN_LENGTH).fill('');
-// 맞았을 때 체크 표시를 보여주고 카드가 물러나는 시간
-const OPEN_BEAT_MS = 520;
+// 맞았을 때 체크 표시를 보여주고 잠금창이 물러나는 시간
+const OPEN_BEAT_MS = 560;
+// 앱 진입 애니메이션 길이
+const APP_ENTER_MS = 600;
+// 아무것도 하지 않으면 이 시간이 지나면 알아서 잠근다
+const IDLE_MS = 60 * 60 * 1000;
 
 // 처음 접속했을 때 가운데 인증번호를 묻는다.
 // 통과하면 그 세션 쿠키 덕분에 새로고침해도 다시 묻지 않는다.
 export default function PasswordGate({ children }) {
-  const [status, setStatus] = useState('checking'); // checking | locked | opening | unlocked
+  const [status, setStatus] = useState('checking'); // checking | locked | unlocked
+  const [opening, setOpening] = useState(false); // 잠금창이 사라지는 중
+  // 앱을 내렸다 올리지 않기 위해, 한 번 열린 뒤로는 마운트를 유지한다.
+  const [appMounted, setAppMounted] = useState(false);
+  const [enterOnMount, setEnterOnMount] = useState(true);
   const [boxes, setBoxes] = useState(EMPTY);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -36,8 +45,14 @@ export default function PasswordGate({ children }) {
       const result = await checkSession();
       if (cancelled) return;
       // 잠금을 쓰지 않는 배포(APP_PASSWORD 미설정)면 곧바로 앱을 띄운다.
-      if (result.ok && !result.enabled) return setStatus('unlocked');
-      if (result.ok && result.authed) return setStatus('unlocked');
+      if (result.ok && !result.enabled) {
+        setAppMounted(true);
+        return setStatus('unlocked');
+      }
+      if (result.ok && result.authed) {
+        setAppMounted(true);
+        return setStatus('unlocked');
+      }
       await refreshNonce();
       if (!cancelled) setStatus('locked');
     })();
@@ -46,6 +61,14 @@ export default function PasswordGate({ children }) {
       clearTimeout(openTimerRef.current);
     };
   }, [refreshNonce]);
+
+  // 앱 진입 애니메이션은 처음 떼는 때에만. 다시 잠갔다 풀릴 때는 앱이 그대로
+  // 살아 있었으므로 재촉하지 않는다.
+  useEffect(() => {
+    if (!appMounted) return undefined;
+    const timer = setTimeout(() => setEnterOnMount(false), APP_ENTER_MS);
+    return () => clearTimeout(timer);
+  }, [appMounted]);
 
   // 틀렸을 때 창을 한 번 흔든다. 오류 문구 자체에 이미 fade-in 이 있으니 겹치지 않게 한다.
   useEffect(() => {
@@ -62,6 +85,48 @@ export default function PasswordGate({ children }) {
       { duration: 380, easing: 'ease-in-out' }
     );
   }, [error]);
+
+// 잠근다. 서버의 세션까지 지워야 새로고침해도 잠금이 유지된다.
+  // 앱은 그대로 두고 잠금창만 덮어 올린다.
+  const performLock = useCallback(async () => {
+    clearTimeout(openTimerRef.current);
+    setOpening(false);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch {
+      // 서버에 닿지 못해도 화면은 잠근다
+    }
+    setBoxes(EMPTY);
+    setError('');
+    setNotice('');
+    setBusy(false);
+    setStatus('locked');
+    await refreshNonce();
+  }, [refreshNonce]);
+
+  // 헤더의 잠금 버튼이 보내는 신호를 받는다
+  useEffect(() => {
+    window.addEventListener(LOCK_EVENT, performLock);
+    return () => window.removeEventListener(LOCK_EVENT, performLock);
+  }, [performLock]);
+
+  // 1시간 동안 아무것도 안 하면 알아서 잠근다. 화면은 그대로 두고 잠금창만 다시 띄운다.
+  useEffect(() => {
+    if (status !== 'unlocked') return undefined;
+    let timer;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(performLock, IDLE_MS);
+    };
+    // 마우스 움직임까지 반응을 볼 필요는 없다. 실제 조작만 센다.
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'visibilitychange'];
+    events.forEach((name) => window.addEventListener(name, arm, { passive: true }));
+    arm();
+    return () => {
+      clearTimeout(timer);
+      events.forEach((name) => window.removeEventListener(name, arm));
+    };
+  }, [status, performLock]);
 
   const onComplete = useCallback(
     async (pin) => {
@@ -84,9 +149,11 @@ export default function PasswordGate({ children }) {
       if (result.ok) {
         setError('');
         setNotice('');
-        // 맞았다는 표시를 잠깐 보여준 뒤 카드를 내보내고 앱으로 넘어간다.
-        setStatus('opening');
-        openTimerRef.current = setTimeout(() => setStatus('unlocked'), OPEN_BEAT_MS);
+        // 맞았다는 표시를 잠깐 보여준 뒤 잠금창을 내보내고 앱을 드러낸다.
+        setAppMounted(true);
+        setStatus('unlocked');
+        setOpening(true);
+        openTimerRef.current = setTimeout(() => setOpening(false), OPEN_BEAT_MS);
         return;
       }
 
@@ -132,28 +199,33 @@ export default function PasswordGate({ children }) {
     );
   }
 
-  if (status === 'unlocked') {
-    // 잠금을 통과하면 앱이 아래에서 살짝 올라오며 나타난다.
-    return <div className="app-enter">{children}</div>;
-  }
-
-  const opening = status === 'opening';
+  // 잠금창이 보이는 동안 앱은 DOM 에 그대로 살아 있다. 자동 잠금 뒤 다시 인증하면
+  // 재생 중인 영상과 멀티뷰, 입력해 둔 주소가 그대로 유지된다.
+  const gateVisible = status === 'locked' || opening;
 
   return (
-    <div
-      className={`gate-backdrop min-h-screen flex items-center justify-center bg-[#050505] px-4 relative overflow-hidden ${
-        opening ? 'gate-open' : ''
-      }`}
-    >
-      <div className="dot-grid" />
-      <form
-        ref={formRef}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (boxes.every((box) => box !== '')) onComplete(boxes.join(''));
-        }}
-        className={`gate-card relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-8 shadow-2xl shadow-black/50`}
-      >
+    <>
+      {appMounted && (
+        <div className={enterOnMount ? 'app-enter' : ''} inert={status === 'locked' || undefined}>
+          {children}
+        </div>
+      )}
+
+      {gateVisible && (
+        <div
+          className={`gate-cover fixed inset-0 z-50 overflow-y-auto bg-[#050505] px-4 py-10 flex items-center justify-center ${
+            opening ? 'gate-cover-out' : ''
+          }`}
+        >
+          <div className="dot-grid" />
+          <form
+            ref={formRef}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (boxes.every((box) => box !== '')) onComplete(boxes.join(''));
+            }}
+            className="gate-card relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-8 shadow-2xl shadow-black/50"
+          >
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center">
             <Lock className="w-4 h-4 text-zinc-300" />
@@ -196,7 +268,9 @@ export default function PasswordGate({ children }) {
         >
           {busy ? '확인 중' : '확인'}
         </Button>
-      </form>
-    </div>
+          </form>
+        </div>
+      )}
+    </>
   );
 }

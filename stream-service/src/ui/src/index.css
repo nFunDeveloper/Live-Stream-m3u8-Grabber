@@ -108,8 +108,13 @@
    Tailwind 의 animate-* 네임스페이스를 피한다. 같은 이름이 겹치면 element
    자체에 transform 이 걸려서 화면이 튀는 문제가 있었다. */
 
-.gate-backdrop {
-  animation: gateFade 0.6s ease-out both;
+/* 잠금창. 앱 위에 덮여 천천히 사라지고 다시 천천히 덮인다. */
+.gate-cover {
+  animation: gateCoverIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.gate-cover-out {
+  animation: gateCoverOut 0.55s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .gate-card {
@@ -122,10 +127,6 @@
 }
 
 /* 맞았을 때 카드가 물러나며 앱으로 넘어간다 */
-.gate-open {
-  animation: gateOpen 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
 .app-enter {
   animation: appEnter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -134,12 +135,26 @@
   animation: pinCheck 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
-@keyframes gateFade {
+
+@keyframes gateCoverIn {
   from {
     opacity: 0;
+    transform: scale(1.015);
   }
   to {
     opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes gateCoverOut {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.01);
   }
 }
 
@@ -165,12 +180,6 @@
   }
 }
 
-@keyframes gateOpen {
-  to {
-    opacity: 0;
-    transform: translateY(-12px) scale(0.94);
-  }
-}
 
 @keyframes appEnter {
   from {
@@ -195,10 +204,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gate-backdrop,
+  .gate-cover,
+  .gate-cover-out,
   .gate-card,
   .pin-box-in,
-  .gate-open,
   .app-enter,
   .pin-check {
     animation: none;
