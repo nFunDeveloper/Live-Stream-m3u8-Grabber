@@ -24,6 +24,10 @@ ALLOWED_HOST_SUFFIXES = (
     # 치지직은 같은 방송도 CDN을 갈아타며 경로를 돌려준다. navercdn.com은
     # 그중 하나라 허용 목록에 없으면 "Host is not allowed"로 거절된다.
     'navercdn.com',
+    # 치지직 스트림이 pstatic.net 대신 Akamai 로 나가기도 한다
+    # (livecloud.akamaized.net). 여기 없으면 추출은 되지만 재생이 막히고
+    # 상태 표시가 "스트림 호스트가 차단되어 있습니다" 로 흐려진다.
+    'akamaized.net',
     'ci.me',
     # ci.me 스트림은 AWS IVS로 나가고 마스터/변형/세그먼트가 전부 다른
     # 호스트다(*.playback / *.playlist / *.cloudfront.hls.live-video.net).

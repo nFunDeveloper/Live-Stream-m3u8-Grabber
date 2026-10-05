@@ -116,7 +116,7 @@ docker compose -f docker-compose.dev.yaml up --build
 |----------|--------|------|
 | `APP_PASSWORD` | `1322` | 화면을 여는 인증번호. 숫자 4자리여야 화면과 맞는다 |
 | `APP_SECRET_KEY` | 고정 기본값 | 세션 쿠키 서명 키. 바꾸면 전원이 다시 인증번호를 쳐야 한다 |
-| `APP_STATE_FILE` | `/tmp/ls-grabber-auth.json` | 잠금 횟수·nonce가 저장되는 파일 |
+| `APP_STATE_FILE` | `/state/auth.json` | 잠금 횟수·nonce가 저장되는 파일 (운영은 볼륨에 둔다) |
 
 ```bash
 APP_PASSWORD='1234' docker compose -f docker-compose.dev.yaml up -d --build backend
@@ -211,7 +211,7 @@ npm install && npm run build
 
 # 2. 소스코드 + dist/ 서버로 전송
 rsync -avz --delete \
-  --exclude='.git' --exclude='node_modules' --exclude='__pycache__' \
+  --exclude='.git' --exclude='node_modules' --exclude='__pycache__' --exclude='.env' \
   ./ oracle:workspace/Live-Stream_m3u8_Grabber/
 
 # 3. 서버에서 Docker 빌드 & 기동
@@ -220,14 +220,46 @@ cd workspace/Live-Stream_m3u8_Grabber
 sudo docker compose up -d --build
 ```
 
+`dist/` 를 저장소에 들여 보내기 때문에 **서버에서 Node를 돌릴 필요가 없다.**
+프론트엔드를 서버에서 빌드하지 않는 것이 이 저장소의 규칙이다.
+
+#### `.env` (서버에 한 번만 만들어 둔다)
+
+`rsync` 는 `.env` 를 건너뛰므로 서버에 직접 만들어 둔다. 지우면 인증번호가
+기본값 `1322` 로, 서명 키는 everyone-knows 값으로 돌아간다.
+
+```bash
+cd workspace/Live-Stream_m3u8_Grabber
+umask 077
+printf 'APP_PASSWORD=1322\nAPP_SECRET_KEY=%s\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > .env
+```
+
+- `APP_SECRET_KEY` 를 바꾸면 접속해 있던 모두가 다시 인증번호를 쳐야 한다.
+- 실패 횟수·nonce 는 `auth-state` 볼륨의 `/state/auth.json` 에 남는다.
+  컨테이너 안 `/tmp` 에 두면 재시작할 때 잠금 기록이 사라진다.
+
+#### 되돌리기
+
+배포 전 상태는 `~/workspace/.backups/live-stream_<타임스탬프>/` 에 남는다.
+문제가 생기면 그 디렉터리로 되돌리고 이전 이미지로 다시 올린다.
+
+```bash
+cd ~/workspace
+cp -a .backups/live-stream_<타임스탬프>/Live-Stream_m3u8_Grabber/. Live-Stream_m3u8_Grabber/
+cd Live-Stream_m3u8_Grabber && sudo docker compose up -d --build
+```
+
 ### 접속 방법
 
 | URL | 설명 |
 |-----|------|
-| `http://localhost:10000/` | 프로덕션 React UI |
-| `http://localhost:10000/api/grab?url=...` | Flask API |
+| `https://stream.xxs.kr/` | 운영 UI (Let's Encrypt 인증서, nginx → 10000) |
+| `https://stream.xxs.kr/api/grab?url=...` | Flask API |
 
-> 서버에서는 nginx 설정(`proxy_pass`)을 통해 외부 도메인으로 연결합니다.
+> 서버의 nginx가 `stream.xxs.kr` → `localhost:10000`(컨테이너 nginx)으로 넘긴다.
+> 운영 nginx 설정이 원래 방문자의 IP 를 넘겨야 잠금 횟수가 사람별로 따로 센다.
+> `X-Forwarded-For` 를 빠뜨리면 모든 요청이 컨테이너 IP 로 보여서 한 사람의
+> 실수가 남까지 잠근다.
 
 ### 컨테이너 구성
 
