@@ -17,9 +17,29 @@ import {
 import PlatformChip from './PlatformChip.jsx';
 import { formatDateTime, formatViewers } from '../lib/platforms.js';
 
+// 사이드바는 방송 상태를 비동기로 받아온다. 응답이 오기 전까지는 흐리게
+// 두었다가 밝아지게 만들어, 확인이 끝났는지 눈으로 알 수 있게 한다.
+// 응답은 왔는데 판단을 못 한 플랫폼(팬더라이브·팝콘TV)은 흐리게 두면
+// 영영 어두운 채로 남으므로 밝게 둔다.
+function statusTone(key, statuses) {
+  const status = statuses[key];
+  if (status === undefined) return 'pending';
+  if (status.is_live === false) return 'offline';
+  if (status.is_live === null || status.is_live === undefined) return 'unknown';
+  return 'live';
+}
+
 function LiveDot({ statusKey, statuses }) {
   const status = statuses[statusKey];
-  if (!status || status.is_live === null || status.is_live === undefined) return null;
+  if (status === undefined) {
+    return (
+      <span
+        title="방송 상태를 확인하는 중"
+        className="w-1.5 h-1.5 rounded-full shrink-0 bg-zinc-700 animate-pulse"
+      />
+    );
+  }
+  if (status.is_live === null || status.is_live === undefined) return null;
   const title = status.is_live
     ? `방송 중${formatViewers(status.viewers) ? ` (${formatViewers(status.viewers)}명)` : ''}`
     : '오프라인';
@@ -85,7 +105,8 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
     e.dataTransfer.setData('application/json', JSON.stringify({ type: 'history', ...entry }));
   };
 
-  const offline = statuses[entry.key]?.is_live === false;
+  const tone = statusTone(entry.key, statuses);
+  const offline = tone === 'offline';
   const secondary = [
     formatDateTime(entry.searchedAt),
     entry.quality ? entry.quality : null,
@@ -95,12 +116,20 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
     <div
       draggable
       onDragStart={handleDragStart}
-      title={offline ? '오프라인 — 클릭 불가, 드래그로 그룹에 추가 가능' : '드래그하여 그룹에 추가'}
+      title={
+        tone === 'pending'
+          ? '방송 상태를 확인하는 중'
+          : offline
+            ? '오프라인 — 클릭 불가, 드래그로 그룹에 추가 가능'
+            : '드래그하여 그룹에 추가'
+      }
       onClick={() => !offline && onPick(entry)}
-      className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors min-w-0 ${
-        offline
-          ? 'opacity-50 cursor-grab'
-          : 'cursor-grab active:cursor-grabbing hover:bg-white/[0.05]'
+      className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-500 min-w-0 ${
+        tone === 'pending'
+          ? 'opacity-40 animate-shimmer cursor-grab'
+          : offline
+            ? 'opacity-50 cursor-grab'
+            : 'cursor-grab active:cursor-grabbing hover:bg-white/[0.05]'
       }`}
     >
       <div className="min-w-0 flex-1">
@@ -282,7 +311,8 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
             </div>
           )}
           {group.members.map((member) => {
-            const offline = statuses[member.key]?.is_live === false;
+            const tone = statusTone(member.key, statuses);
+            const offline = tone === 'offline';
             return (
               <div
                 key={member.key}
@@ -315,15 +345,23 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                 }}
                 onClick={() => !offline && onPick(member)}
                 onKeyDown={(e) => e.key === 'Enter' && !offline && onPick(member)}
-                title={offline ? '오프라인 — 클릭 불가, 드래그로 이동/정렬 가능' : '드래그하여 순서 변경 또는 다른 그룹으로 이동'}
-                className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all min-w-0 ${
+                title={
+                  tone === 'pending'
+                    ? '방송 상태를 확인하는 중'
+                    : offline
+                      ? '오프라인 — 클릭 불가, 드래그로 이동/정렬 가능'
+                      : '드래그하여 순서 변경 또는 다른 그룹으로 이동'
+                }
+                className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-500 min-w-0 ${
                   dragOverMemberKey === member.key
                     ? 'ring-1 ring-white/50 bg-white/10'
                     : ''
                 } ${
-                  offline
-                    ? 'opacity-50 cursor-grab'
-                    : 'cursor-pointer hover:bg-white/[0.05]'
+                  tone === 'pending'
+                    ? 'opacity-40 animate-shimmer cursor-grab'
+                    : offline
+                      ? 'opacity-50 cursor-grab'
+                      : 'cursor-pointer hover:bg-white/[0.05]'
                 }`}
               >
                 <div className="min-w-0 flex-1">

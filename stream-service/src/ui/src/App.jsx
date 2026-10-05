@@ -37,9 +37,7 @@ const STEPS = [
   { icon: MonitorPlay, label: '바로 재생' },
 ];
 
-function EmptyState() {
-  const { health, loading } = usePlatformHealth();
-
+function EmptyState({ health, loading }) {
   return (
     <div className="w-full aspect-video max-h-[65vh] flex flex-col items-center justify-center gap-6 border border-dashed border-white/10 rounded-xl bg-white/[0.01] px-6 text-center">
       <div className="flex items-center gap-5 sm:gap-8">
@@ -72,6 +70,9 @@ function App() {
   const [statuses, setStatuses] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [multiViewGroupId, setMultiViewGroupId] = useState(null);
+  // 확인은 앱이 뜬 시점에 한 번만 돌린다. 빈 화면이 다시 나타날 때마다
+  // 다시 물어보면 잠깐의 깜빡임이 매번 반복된다.
+  const { health, loading: healthLoading } = usePlatformHealth();
 
   // 입력된 URL의 플랫폼에 따라 선택 가능한 해상도만 남긴다.
   const detectedPlatform = useMemo(() => detectPlatform(url), [url]);
@@ -500,7 +501,7 @@ function App() {
           {result ? (
             <PlayerPanel result={result} showToast={showToast} />
           ) : (
-            !error && <EmptyState />
+            !error && <EmptyState health={health} loading={healthLoading} />
           )}
           </>
           )}

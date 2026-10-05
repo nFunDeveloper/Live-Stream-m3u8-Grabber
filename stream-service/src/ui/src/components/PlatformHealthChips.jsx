@@ -41,8 +41,7 @@ export function usePlatformHealth() {
 }
 
 export default function PlatformHealthChips({ health, loading }) {
-  // 확인 전에는 전부 중립으로 보여준다. 잠깐 회색으로 나오는 편이
-  // "이 플랫폼은 죽었다"라는 잘못된 인상을 주지 않는다.
+  const failed = !loading && !health;
   const hasUnavailable = health
     ? Object.values(health).some((item) => !item.ok)
     : false;
@@ -52,22 +51,44 @@ export default function PlatformHealthChips({ health, loading }) {
       <div className="flex flex-wrap justify-center gap-1.5">
         {Object.entries(PLATFORM_META).map(([key, meta]) => {
           const state = health ? health[key] : null;
-          // 아직 확인 전이거나 확인에 실패한 플랫폼은 그냥 둔다
-          const unavailable = state ? state.ok === false : false;
+          // 아직 결과를 모르는 것과, 확인했더니 못 쓴다는 것을 구분한다.
+          // 전자는 기다리는 표시를, 후자는 취소선을 그린다.
+          const pending = loading;
+          const verified = !pending && Boolean(state) && state.ok === true;
+          const unavailable = !pending && Boolean(state) && state.ok === false;
+
+          const tone = unavailable
+            ? 'bg-transparent border-white/5 text-zinc-600 line-through'
+            : pending
+              ? 'bg-white/[0.02] border-dashed border-white/10 text-zinc-600 animate-shimmer'
+              : verified
+                ? // 확인된 플랫폼은 각자 브랜드 색으로 물든다. 회색이었다가
+                  // 색으로 바뀌는 변화 자체가 "지금은 쓸 수 있다"는 신호다.
+                  `${meta.chip} ${meta.border} ${meta.text}`
+                : // 확인 요청이 실패했거나 응답에 없던 플랫폼은 판단을 보류한다.
+                  'bg-white/[0.04] border-white/10 text-zinc-300';
+
+          const dotClass = pending
+            ? 'bg-zinc-700'
+            : unavailable
+              ? 'bg-zinc-700'
+              : meta.dot;
 
           return (
             <span
               key={key}
-              title={unavailable ? state.reason || '지금 사용할 수 없습니다' : meta.label}
-              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] sm:text-xs font-medium transition-colors ${
+              title={
                 unavailable
-                  ? 'bg-transparent border-white/5 text-zinc-600 line-through'
-                  : 'bg-white/[0.04] border-white/10 text-zinc-300'
-              }`}
+                  ? state.reason || '지금 사용할 수 없습니다'
+                  : pending
+                    ? '지금 스트림을 받을 수 있는지 확인하는 중입니다'
+                    : meta.label
+              }
+              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] sm:text-xs font-medium transition-all duration-500 ${tone}`}
             >
               <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  unavailable ? 'bg-zinc-700' : meta.dot
+                className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors duration-500 ${
+                  pending ? `${dotClass} animate-pulse` : dotClass
                 }`}
               />
               {meta.label}
@@ -76,16 +97,22 @@ export default function PlatformHealthChips({ health, loading }) {
           );
         })}
       </div>
+
       {loading && (
         <div className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          플랫폼 연결 상태를 확인하는 중
+          <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+          플랫폼별 연결 상태를 확인하는 중 · 지금 라이브 방송을 직접 받아봅니다
         </div>
       )}
-      {!loading && (
+      {!loading && failed && (
+        <p className="text-[11px] text-zinc-600">
+          플랫폼 연결 상태를 확인하지 못했습니다. 일단 모두 쓸 수 있는 것으로 봅니다
+        </p>
+      )}
+      {!loading && !failed && (
         <p className="text-[11px] text-zinc-600">
           {hasUnavailable
-            ? '지금 스트림을 받을 수 없는 플랫폼은 흐리게 표시되며, 나머지는 그대로 사용할 수 있습니다'
+            ? '플랫폼 색으로 물든 테두리는 지금 스트림을 받을 수 있는 플랫폼입니다'
             : '방송 중인 채널의 URL을 입력하면 메타데이터와 함께 스트림이 추출됩니다'}
         </p>
       )}

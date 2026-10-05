@@ -71,6 +71,39 @@
   }
 }
 
+/* 플랫폼 확인 중: 빛이 좌우로 지나가며 아직 결과를 모른다는 걸 보여준다 */
+.animate-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.animate-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.07),
+    transparent
+  );
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 /* 2줄 말줄임 */
 .line-clamp-2 {
   display: -webkit-box;
