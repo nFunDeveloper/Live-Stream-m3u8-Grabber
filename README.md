@@ -105,6 +105,26 @@ docker compose -f docker-compose.dev.yaml up --build
 | `http://localhost:10000/develop/` | React 개발 UI (코드 수정 시 자동 리로드) |
 | `http://localhost:10000/api/grab?url=...` | Flask API |
 
+### 비밀번호 잠금
+
+앱을 처음 열면 가운데 비밀번호 입력창이 뜨고, 통과해야 본 화면이 열린다.
+주소를 알면 누구나 방송을 추출할 수 있어서 막는 것이다. 통과한 뒤에는
+서명된 세션 쿠키로 기억되므로 새로고침해도 다시 묻지 않는다(30일).
+
+| 환경변수 | 기본값 | 설명 |
+|----------|--------|------|
+| `APP_PASSWORD` | `calico` | 화면을 여는 비밀번호. 바꾸려면 배포할 때 덮어쓴다 |
+| `APP_SECRET_KEY` | 고정 기본값 | 세션 쿠키 서명 키. 바꾸면 전원이 다시 비밀번호를 쳐야 한다 |
+
+```bash
+APP_PASSWORD='원하는비밀번호' docker compose -f docker-compose.dev.yaml up -d --build backend
+```
+
+- `APP_PASSWORD`를 비우면 잠금이 꺼지고 로그에 경고가 남는다. 테스트도 이 상태를 쓴다.
+- 잠금 여부는 프론트가 아니라 백엔드가 강제한다. 잠그지 않은 상태로 `/api/grab`을
+  직접 불러도 401이 돌아온다.
+- 같은 주소에서 5번 틀리면 1분 동안 잠시 막힌다.
+
 ### 개발 시 주의사항
 
 - `docker-compose.dev.yaml` 전환 후 **반드시 `--build` 포함** 실행

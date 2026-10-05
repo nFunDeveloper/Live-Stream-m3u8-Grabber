@@ -10,6 +10,8 @@ from platform_modules.pandalive import Pandalive
 from platform_modules.popkon import Popkon
 from platform_modules.soop import Soop
 from platform_health import get_health
+import auth_guard
+from auth_guard import install as install_auth_guard
 from stream_proxy import (
     ProxyError,
     ProxyForbidden,
@@ -25,6 +27,14 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# 비밀번호로 잠근 뒤에야 어떤 API든 닿을 수 있게 한다.
+install_auth_guard(app)
+if not auth_guard.is_enabled():
+    logger.warning(
+        "[auth] APP_PASSWORD 가 비어 있어 비밀번호 잠금이 꺼져 있다."
+        " 외부에 노출되는 곳이라면 반드시 설정할 것"
+    )
 
 platforms = {
     'soop': Soop(),

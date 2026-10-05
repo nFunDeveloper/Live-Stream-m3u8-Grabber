@@ -7,6 +7,7 @@ from urllib.parse import quote
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 import app as app_module
+import auth_guard
 import platform_health
 import stream_proxy
 
@@ -524,6 +525,83 @@ class PlatformHealthProbeTests(unittest.TestCase):
 
         # streamer_id 가 비어 있는 항목은 제외된다
         self.assertEqual(sorted(ids), ["aaa", "bbb"])
+
+
+class AuthGuardTests(unittest.TestCase):
+    """비밀번호 잠금은 APP_PASSWORD 환경변수에 따라 켜지고 꺼진다."""
+
+    def setUp(self):
+        auth_guard._attempts.clear()
+        self.password = patch.dict(os.environ, {"APP_PASSWORD": "calico"})
+        self.password.start()
+        self.client = app_module.app.test_client()
+
+    def tearDown(self):
+        self.password.stop()
+        auth_guard._attempts.clear()
+
+    def _login(self, password="calico"):
+        return self.client.post("/api/auth/login", json={"password": password})
+
+    def test_session_reports_locked_before_login(self):
+        response = self.client.get("/api/auth/session")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"authed": False, "enabled": True})
+
+    def test_api_is_blocked_until_login(self):
+        with patch.object(app_module, "get_health", return_value={}):
+            for method, url in [
+                ("get", "/api/platforms/health"),
+                ("get", "/api/search?q=테스트"),
+                ("get", "/api/stream?u=https://example.com/a.m3u8"),
+                ("post", "/api/status"),
+            ]:
+                response = getattr(self.client, method)(url)
+                self.assertEqual(response.status_code, 401, url)
+                self.assertTrue(response.json.get("auth_required"))
+
+    def test_wrong_password_is_rejected(self):
+        response = self._login(password="wrong")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json["error"], "invalid_password")
+
+    def test_correct_password_unlocks_and_persists_in_session(self):
+        self.assertEqual(self._login().status_code, 200)
+        self.assertTrue(self.client.get("/api/auth/session").json["authed"])
+
+    def test_api_works_after_login(self):
+        with patch.object(app_module, "get_health", return_value={}):
+            self._login()
+            response = self.client.get("/api/platforms/health")
+        self.assertEqual(response.status_code, 200)
+
+    def test_repeated_failures_lock_out_the_client(self):
+        for _ in range(auth_guard.MAX_ATTEMPTS):
+            self.assertEqual(self._login(password="wrong").status_code, 401)
+        # 실패 횟수를 모두 채우면 다음 시도는 잠시 막힌다
+        locked = self._login()
+        self.assertEqual(locked.status_code, 429)
+        self.assertGreater(locked.json["retry_after"], 0)
+        # 잠금 중에도 맞는 비밀번호는 통과시키지 않는다
+        self.assertEqual(self._login().status_code, 429)
+
+    def test_correct_password_clears_failure_count(self):
+        self._login(password="wrong")
+        self._login(password="wrong")
+        self.assertEqual(self._login().status_code, 200)
+        self.assertEqual(auth_guard._attempts, {})
+
+    def test_logout_locks_again(self):
+        self._login()
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+        self.assertFalse(self.client.get("/api/auth/session").json["authed"])
+
+    def test_guard_is_disabled_without_password(self):
+        # 환경변수가 비면 잠금을 걸지 않는다. 개발 중 설정을 잊어도 앱은 돌아간다.
+        with patch.dict(os.environ, {"APP_PASSWORD": ""}):
+            self.assertFalse(auth_guard.is_enabled())
+            with patch.object(app_module, "get_health", return_value={}):
+                self.assertEqual(self.client.get("/api/platforms/health").status_code, 200)
 
 
 if __name__ == "__main__":
