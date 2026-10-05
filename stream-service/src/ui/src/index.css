@@ -104,6 +104,107 @@
   }
 }
 
+/* ── 비밀번호 잠금 화면 ─────────────────────────────────
+   Tailwind 의 animate-* 네임스페이스를 피한다. 같은 이름이 겹치면 element
+   자체에 transform 이 걸려서 화면이 튀는 문제가 있었다. */
+
+.gate-backdrop {
+  animation: gateFade 0.6s ease-out both;
+}
+
+.gate-card {
+  animation: gateEnter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 입력 칸이 하나씩 늦게 나타난다 */
+.pin-box-in {
+  animation: pinBoxIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 맞았을 때 카드가 물러나며 앱으로 넘어간다 */
+.gate-open {
+  animation: gateOpen 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.app-enter {
+  animation: appEnter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.pin-check {
+  animation: pinCheck 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes gateFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes gateEnter {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pinBoxIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes gateOpen {
+  to {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.94);
+  }
+}
+
+@keyframes appEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pinCheck {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-backdrop,
+  .gate-card,
+  .pin-box-in,
+  .gate-open,
+  .app-enter,
+  .pin-check {
+    animation: none;
+  }
+}
+
 /* 2줄 말줄임 */
 .line-clamp-2 {
   display: -webkit-box;

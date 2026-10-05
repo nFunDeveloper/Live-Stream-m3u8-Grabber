@@ -5,16 +5,20 @@ import { checkSession, fetchChallenge, login } from '../lib/auth.js';
 import PinInput, { PIN_LENGTH } from './PinInput.jsx';
 
 const EMPTY = Array(PIN_LENGTH).fill('');
+// 맞았을 때 체크 표시를 보여주고 카드가 물러나는 시간
+const OPEN_BEAT_MS = 520;
 
 // 처음 접속했을 때 가운데 인증번호를 묻는다.
 // 통과하면 그 세션 쿠키 덕분에 새로고침해도 다시 묻지 않는다.
 export default function PasswordGate({ children }) {
-  const [status, setStatus] = useState('checking'); // checking | locked | unlocked
+  const [status, setStatus] = useState('checking'); // checking | locked | opening | unlocked
   const [boxes, setBoxes] = useState(EMPTY);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const nonceRef = useRef(null);
+  const formRef = useRef(null);
+  const openTimerRef = useRef(null);
 
   // 잠금 상태일 때 쓸 일회용 값을 미리 받는다. 한 번 쓰면 다시 못 쓰므로
   // 시도할 때마다 새로 받아야 한다.
@@ -39,8 +43,25 @@ export default function PasswordGate({ children }) {
     })();
     return () => {
       cancelled = true;
+      clearTimeout(openTimerRef.current);
     };
   }, [refreshNonce]);
+
+  // 틀렸을 때 창을 한 번 흔든다. 오류 문구 자체에 이미 fade-in 이 있으니 겹치지 않게 한다.
+  useEffect(() => {
+    if (!error) return;
+    formRef.current?.animate?.(
+      [
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(-6px)' },
+        { transform: 'translateX(5px)' },
+        { transform: 'translateX(-4px)' },
+        { transform: 'translateX(3px)' },
+        { transform: 'translateX(0)' },
+      ],
+      { duration: 380, easing: 'ease-in-out' }
+    );
+  }, [error]);
 
   const onComplete = useCallback(
     async (pin) => {
@@ -63,7 +84,9 @@ export default function PasswordGate({ children }) {
       if (result.ok) {
         setError('');
         setNotice('');
-        setStatus('unlocked');
+        // 맞았다는 표시를 잠깐 보여준 뒤 카드를 내보내고 앱으로 넘어간다.
+        setStatus('opening');
+        openTimerRef.current = setTimeout(() => setStatus('unlocked'), OPEN_BEAT_MS);
         return;
       }
 
@@ -109,17 +132,27 @@ export default function PasswordGate({ children }) {
     );
   }
 
-  if (status === 'unlocked') return children;
+  if (status === 'unlocked') {
+    // 잠금을 통과하면 앱이 아래에서 살짝 올라오며 나타난다.
+    return <div className="app-enter">{children}</div>;
+  }
+
+  const opening = status === 'opening';
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#050505] px-4 relative overflow-hidden">
+    <div
+      className={`gate-backdrop min-h-screen flex items-center justify-center bg-[#050505] px-4 relative overflow-hidden ${
+        opening ? 'gate-open' : ''
+      }`}
+    >
       <div className="dot-grid" />
       <form
+        ref={formRef}
         onSubmit={(e) => {
           e.preventDefault();
           if (boxes.every((box) => box !== '')) onComplete(boxes.join(''));
         }}
-        className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-8 shadow-2xl shadow-black/50"
+        className={`gate-card relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-8 shadow-2xl shadow-black/50`}
       >
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center">
@@ -141,6 +174,7 @@ export default function PasswordGate({ children }) {
           onBoxesChange={setBoxes}
           disabled={busy}
           onComplete={onComplete}
+          opened={opening}
         />
 
         {error && (
