@@ -8,16 +8,49 @@ import { formatViewers } from '../lib/platforms.js';
 // 치지직은 동시시청 스트림을 5개까지만 허용한다. 넘으면 추가 로드는 실패한다.
 const MAX_ACTIVE_STREAMS = 5;
 
+// 멀티뷰 타일의 화질 상한. 그리드 타일은 몇 백 px 밖에 안 되므로 더 높을 이유가
+// 없지만, 상한을 안 두면 문제가 생긴다. 타일마다 각자 ABR 로 화질을 올리는데
+// 각자 회선을 독점한다고 착각하기 때문에, 한 타일이 1080p 를 붙잡으면
+// 나머지가 굶고 타일 하나는 아예 불러오지 못한다 (실측 확인).
+const MULTIVIEW_MAX_HEIGHT = 480;
+
 // 동시에 여러 개를 불러오면 느려질 수 있다. 시간이 지나면 실패로 바꿔
 // 사용자가 재시도할 수 있게 한다 (무한 로딩 방지).
 const GRAB_TIMEOUT_MS = 20000;
 const FIRST_FRAME_TIMEOUT_MS = 30000;
+
+// 타일의 화질을 정한다. 확대된 타일은 화면을 크게 보므로 최고 화질을 우선하고,
+// 나머지는 그리드에 작게 깔리므로 480p 로 막는다. 막지 않으면 각 타일의 ABR 이
+// 회선 전체를 자기 몫이라 생각해 한 타일이 1080p 를 붙잡고 나머지를 굶는다.
+function applyLevelQuality(hls, focused) {
+  if (!hls?.levels?.length) return;
+  const byHeight = hls.levels
+    .map((level, index) => ({ index, height: level.height || 0 }))
+    .sort((a, b) => b.height - a.height);
+
+  if (focused) {
+    const best = byHeight.find((level) => level.height > 0) || byHeight[0];
+    // ABR 로 올리면 몇 초씩 걸려 체감이 늦다. 곧바로 최고 화질로 붙인다.
+    hls.autoLevelCapping = -1;
+    hls.currentLevel = best.index;
+    return;
+  }
+
+  // 상한을 다시 걸기 전에 자동 선택으로 되돌려야 상한이 실제로 적용된다.
+  hls.currentLevel = -1;
+  const capped = byHeight.find((level) => level.height > 0 && level.height <= MULTIVIEW_MAX_HEIGHT);
+  // 화질 목록을 모르는 플랫폼은 ABR 에 맡긴다.
+  hls.autoLevelCapping = capped ? capped.index : -1;
+}
 
 function MultiViewTile({
   member, statuses, focused, muted, unmuteSignal,
   deferred, onPromote, onToggleMute, onTileClick,
 }) {
   const videoRef = useRef(null);
+  // 로드 중인 타일의 비동기 콜백(MANIFEST_PARSED)이 지금 확대 상태인지 알도록
+  // 따로 들고 있다. 렌더 중에는 ref 에 쓰지 않는다.
+  const focusedRef = useRef(focused);
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
   // 세대 번호. 재시도나 슬롯 교체로 이전 load가 새 load를 덮어쓰지 못하게 한다.
@@ -132,6 +165,7 @@ function MultiViewTile({
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (isStale() || frameSeen) return;
+            applyLevelQuality(hls, focusedRef.current);
             // 파싱만으로는 준비된 게 아니므로 waitForFrame이 실제 프레임을 기다린다
             waitForFrame();
           });
@@ -177,6 +211,12 @@ function MultiViewTile({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [member.key, attempt, deferred]);
+
+  // 확대되면 최고 화질로, 다시 그리드로 돌아오면 상한을 되돌린다.
+  useEffect(() => {
+    focusedRef.current = focused;
+    if (hlsRef.current) applyLevelQuality(hlsRef.current, focused);
+  }, [focused]);
 
   const retry = (e) => {
     // 타일 클릭(확대)과 겹치지 않도록 전파를 막는다
