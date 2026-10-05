@@ -1,5 +1,8 @@
+import hashlib
 import os
 import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import quote
@@ -531,17 +534,32 @@ class AuthGuardTests(unittest.TestCase):
     """비밀번호 잠금은 APP_PASSWORD 환경변수에 따라 켜지고 꺼진다."""
 
     def setUp(self):
-        auth_guard._attempts.clear()
-        self.password = patch.dict(os.environ, {"APP_PASSWORD": "calico"})
-        self.password.start()
+        handle, self.state_file = tempfile.mkstemp(prefix="ls-auth-test-")
+        os.close(handle)
+        os.unlink(self.state_file)  # 빈 상태 파일로 시작
+        self.env = patch.dict(
+            os.environ,
+            {"APP_PASSWORD": "calico", "APP_STATE_FILE": self.state_file},
+        )
+        self.env.start()
         self.client = app_module.app.test_client()
 
     def tearDown(self):
-        self.password.stop()
-        auth_guard._attempts.clear()
+        self.env.stop()
+        if os.path.exists(self.state_file):
+            os.unlink(self.state_file)
 
-    def _login(self, password="calico"):
-        return self.client.post("/api/auth/login", json={"password": password})
+    def _nonce(self):
+        response = self.client.get("/api/auth/challenge")
+        self.assertEqual(response.status_code, 200)
+        return response.json["nonce"]
+
+    def _login(self, password="calico", nonce=None):
+        nonce = self._nonce() if nonce is None else nonce
+        proof = hashlib.sha256(f"{password}:{nonce}".encode()).hexdigest()
+        return self.client.post(
+            "/api/auth/login", json={"nonce": nonce, "proof": proof}
+        )
 
     def test_session_reports_locked_before_login(self):
         response = self.client.get("/api/auth/session")
@@ -575,21 +593,93 @@ class AuthGuardTests(unittest.TestCase):
             response = self.client.get("/api/platforms/health")
         self.assertEqual(response.status_code, 200)
 
-    def test_repeated_failures_lock_out_the_client(self):
-        for _ in range(auth_guard.MAX_ATTEMPTS):
-            self.assertEqual(self._login(password="wrong").status_code, 401)
-        # 실패 횟수를 모두 채우면 다음 시도는 잠시 막힌다
+    def test_nonce_cannot_be_replayed(self):
+        # 같은 증명으로 두 번 시도하면 안 된다. 도청한 값을 되쏘아도 뚫리면 안 된다.
+        nonce = self._nonce()
+        first = self._login(nonce=nonce)
+        self.assertEqual(first.status_code, 200)
+        second = self._login(nonce=nonce)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(second.json["error"], "stale_nonce")
+
+    def test_nonce_is_consumed_even_on_failure(self):
+        nonce = self._nonce()
+        self.assertEqual(self._login(password="wrong", nonce=nonce).status_code, 401)
+        # 틀린 시도가 nonce 를 태워 버린다
+        self.assertEqual(self._login(nonce=nonce).status_code, 400)
+
+    def test_expired_nonce_is_rejected(self):
+        nonce = self._nonce()
+        with patch.object(auth_guard.time, "time", return_value=time.time() + 61):
+            response = self._login(nonce=nonce)
+        self.assertEqual(response.status_code, 400)
+
+    def test_missing_proof_is_rejected(self):
+        nonce = self._nonce()
+        response = self.client.post("/api/auth/login", json={"nonce": nonce})
+        self.assertEqual(response.status_code, 401)
+
+    def test_five_failures_lock_out_for_ten_minutes(self):
+        for attempt in range(auth_guard.MAX_ATTEMPTS):
+            response = self._login(password="wrong")
+            self.assertEqual(response.status_code, 401, f"attempt {attempt}")
+            self.assertEqual(response.json["attempts_left"], auth_guard.MAX_ATTEMPTS - attempt - 1)
+
         locked = self._login()
         self.assertEqual(locked.status_code, 429)
-        self.assertGreater(locked.json["retry_after"], 0)
+        self.assertEqual(locked.json["lockout_minutes"], 10)
+        self.assertGreater(locked.json["retry_after"], 9 * 60)
         # 잠금 중에도 맞는 비밀번호는 통과시키지 않는다
         self.assertEqual(self._login().status_code, 429)
 
-    def test_correct_password_clears_failure_count(self):
-        self._login(password="wrong")
-        self._login(password="wrong")
+    def _run_lockout_at(self, elapsed):
+        """elapsed 초 시점에서 실패를 채워 잠금을 걸고, 걸린 시간을 돌려준다."""
+        with patch.object(auth_guard.time, "time", return_value=time.time() + elapsed):
+            for _ in range(auth_guard.MAX_ATTEMPTS):
+                self._login(password="wrong")
+            blocked = self._login()
+        self.assertEqual(blocked.status_code, 429)
+        return blocked.json["lockout_minutes"]
+
+    def test_lockout_grows_with_repeated_failures(self):
+        minutes = []
+        elapsed = 0.0
+        for _ in range(4):
+            minutes.append(self._run_lockout_at(elapsed))
+            # 잠금이 끝난 뒤로 시간을 넘겨 다음 단계를 본다
+            elapsed += minutes[-1] * 61
+        self.assertEqual(minutes, [10, 20, 40, 80])
+
+    def test_lockout_is_capped(self):
+        minutes = []
+        elapsed = 0.0
+        for _ in range(10):
+            minutes.append(self._run_lockout_at(elapsed))
+            elapsed += minutes[-1] * 61
+        self.assertEqual(minutes[-1], auth_guard.MAX_LOCKOUT_MINUTES)
+        # 중간에 잘리지 않고 계속 증가한다
+        self.assertEqual(minutes[:-1], sorted(minutes[:-1]))
+
+    def test_success_resets_the_failure_counter(self):
+        for _ in range(auth_guard.MAX_ATTEMPTS - 1):
+            self._login(password="wrong")
         self.assertEqual(self._login().status_code, 200)
-        self.assertEqual(auth_guard._attempts, {})
+
+        # 누적은 초기화됐으므로 다시 4번까지만 틀려도 잠기지 않는다
+        for _ in range(auth_guard.MAX_ATTEMPTS - 1):
+            response = self._login(password="wrong")
+            self.assertEqual(response.status_code, 401)
+        self.assertEqual(self._login().status_code, 200)
+
+    def test_success_after_lockout_clears_the_record(self):
+        for _ in range(auth_guard.MAX_ATTEMPTS):
+            self._login(password="wrong")
+        self.assertEqual(self._login().status_code, 429)
+
+        with patch.object(auth_guard.time, "time", return_value=time.time() + 11 * 60):
+            self.assertEqual(self._login().status_code, 200)
+        # 누적 횟수가 0으로 돌아갔는지 다음 실패가 4회째까지 잠기지 않는지로 본다
+        self.assertEqual(self._login(password="wrong").json["attempts_left"], 4)
 
     def test_logout_locks_again(self):
         self._login()
