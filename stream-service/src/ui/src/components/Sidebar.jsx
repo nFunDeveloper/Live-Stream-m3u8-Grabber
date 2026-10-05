@@ -126,7 +126,7 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
       onClick={() => !offline && onPick(entry)}
       className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-500 min-w-0 ${
         tone === 'pending'
-          ? 'opacity-40 animate-shimmer cursor-grab'
+          ? 'opacity-40 sweep-shimmer cursor-grab'
           : offline
             ? 'opacity-50 cursor-grab'
             : 'cursor-grab active:cursor-grabbing hover:bg-white/[0.05]'
@@ -358,7 +358,7 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                     : ''
                 } ${
                   tone === 'pending'
-                    ? 'opacity-40 animate-shimmer cursor-grab'
+                    ? 'opacity-40 sweep-shimmer cursor-grab'
                     : offline
                       ? 'opacity-50 cursor-grab'
                       : 'cursor-pointer hover:bg-white/[0.05]'

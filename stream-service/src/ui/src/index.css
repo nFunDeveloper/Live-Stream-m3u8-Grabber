@@ -72,12 +72,12 @@
 }
 
 /* 플랫폼 확인 중: 빛이 좌우로 지나가며 아직 결과를 모른다는 걸 보여준다 */
-.animate-shimmer {
+.sweep-shimmer {
   position: relative;
   overflow: hidden;
 }
 
-.animate-shimmer::after {
+.sweep-shimmer::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -98,7 +98,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-shimmer::after {
+  .sweep-shimmer::after {
     animation: none;
     opacity: 0;
   }

@@ -60,7 +60,7 @@ export default function PlatformHealthChips({ health, loading }) {
           const tone = unavailable
             ? 'bg-transparent border-white/5 text-zinc-600 line-through'
             : pending
-              ? 'bg-white/[0.02] border-dashed border-white/10 text-zinc-600 animate-shimmer'
+              ? 'bg-white/[0.02] border-dashed border-white/10 text-zinc-600 sweep-shimmer'
               : verified
                 ? // 확인된 플랫폼은 각자 브랜드 색으로 물든다. 회색이었다가
                   // 색으로 바뀌는 변화 자체가 "지금은 쓸 수 있다"는 신호다.
