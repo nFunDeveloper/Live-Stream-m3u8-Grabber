@@ -98,6 +98,13 @@ function CopyM3u8Button({ onClick }) {
   );
 }
 
+// 마우스가 행의 위쪽 절반이면 그 행 앞에, 아래쪽 절반이면 그 행 뒤에 끼워 넣는다.
+// 어느 절반에 있는지만으로 삽입 위치를 정하니 원하는 자리를 직접 가리킬 수 있다.
+function dropSide(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+}
+
 function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   // 히스토리 항목을 사이드바 그룹으로 드래그할 수 있도록 페이로드 실기
   const handleDragStart = (e) => {
@@ -120,8 +127,8 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
         tone === 'pending'
           ? '방송 상태를 확인하는 중'
           : offline
-            ? '오프라인 — 클릭 불가, 드래그로 그룹에 추가 가능'
-            : '드래그하여 그룹에 추가'
+            ? '오프라인 — 클릭 불가, 드래그로 원하는 위치에 추가'
+            : '드래그하여 그룹의 원하는 위치에 추가'
       }
       onClick={() => !offline && onPick(entry)}
       className={`group/item flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-500 min-w-0 ${
@@ -154,9 +161,11 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
   );
 }
 
-function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onReorderMember, onDeleteMember, onDropMember, onCopyM3u8, onOpenMultiView, statuses }) {
+function GroupItem({ group, open, dragging, onToggle, onPick, onDeleteGroup, onRenameGroup, onReorderGroup, onMoveMember, onReorderMember, onDeleteMember, onDropHistory, onCopyM3u8, onOpenMultiView, statuses }) {
   const [dragOver, setDragOver] = useState(false);
-  const [dragOverMemberKey, setDragOverMemberKey] = useState(null);
+  // { key, side } — 어느 멤버의 앞/뒤에 끼울지 가리키는 표시줄의 위치
+  const [memberHint, setMemberHint] = useState(null);
+  const [tailOver, setTailOver] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -181,9 +190,9 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
     setEditName('');
   };
 
+  // 멤버 행이 아닌 곳(헤더·여백)에 놓으면 그 그룹의 맨 뒤에 넣는다.
   const handleDragOver = (e) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
     if (!dragOver) setDragOver(true);
   };
 
@@ -195,9 +204,9 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
       if (payload?.type === 'group' && payload?.groupId) {
         onReorderGroup(payload.groupId, group.id);
       } else if (payload?.type === 'member' && payload?.groupId) {
-        onMoveMember(payload.groupId, group.id, payload);
-      } else if (payload?.platform && payload?.streamer_id) {
-        onDropMember(group, payload);
+        onMoveMember(payload.groupId, group.id, payload, null, 'before');
+      } else if (payload?.type === 'history') {
+        onDropHistory(group, payload);
       }
     } catch {
       // 드래그 페이로드가 아니면 무시
@@ -307,7 +316,8 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
         <div className="ml-3 pl-2 border-l border-white/5 flex flex-col gap-0.5 min-w-0">
           {group.members.length === 0 && (
             <div className="px-2 py-1.5 text-[10px] text-zinc-600">
-              히스토리 항목을 이 그룹으로 드래그해 저장하세요
+              히스토리 항목을 이 그룹으로 드래그해 저장하세요. 항목을 위/아래
+              절반에 가리키면 그 자리에 그대로 들어갑니다.
             </div>
           )}
           {group.members.map((member) => {
@@ -323,21 +333,33 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  e.dataTransfer.dropEffect = 'move';
-                  if (dragOverMemberKey !== member.key) setDragOverMemberKey(member.key);
+                  setTailOver(false);
+                  const side = dropSide(e);
+                  if (memberHint?.key !== member.key || memberHint?.side !== side) {
+                    setMemberHint({ key: member.key, side });
+                  }
                 }}
-                onDragLeave={() => setDragOverMemberKey((key) => (key === member.key ? null : key))}
+                onDragLeave={() =>
+                  setMemberHint((hint) => (hint?.key === member.key ? null : hint))
+                }
                 onDrop={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setDragOverMemberKey(null);
+                  const side = dropSide(e);
+                  setMemberHint(null);
+                  setDragOver(false);
                   try {
                     const payload = JSON.parse(e.dataTransfer.getData('application/json'));
-                    if (payload?.type !== 'member' || !payload.key) return;
-                    if (payload.groupId === group.id) {
-                      onReorderMember(group.id, payload.key, member.key);
-                    } else {
-                      onMoveMember(payload.groupId, group.id, payload, member.key);
+                    if (!payload?.key) return;
+                    // 힌트와 실제 드롭 위치가 어긋나지 않게 표시도 같이 정리한다.
+                    if (payload.type === 'member') {
+                      if (payload.groupId === group.id) {
+                        onReorderMember(group.id, payload.key, member.key, side);
+                      } else {
+                        onMoveMember(payload.groupId, group.id, payload, member.key, side);
+                      }
+                    } else if (payload.type === 'history') {
+                      onDropHistory(group, payload, member.key, side);
                     }
                   } catch {
                     // 드래그 페이로드가 아니면 무시
@@ -345,18 +367,20 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
                 }}
                 onClick={() => !offline && onPick(member)}
                 onKeyDown={(e) => e.key === 'Enter' && !offline && onPick(member)}
-                title={
+title={
                   tone === 'pending'
                     ? '방송 상태를 확인하는 중'
                     : offline
                       ? '오프라인 — 클릭 불가, 드래그로 이동/정렬 가능'
-                      : '드래그하여 순서 변경 또는 다른 그룹으로 이동'
+                      : '위/아래 절반에 따라 앞/뒤 순서가 정해집니다'
                 }
                 className={`group/m flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all duration-500 min-w-0 ${
-                  dragOverMemberKey === member.key
-                    ? 'ring-1 ring-white/50 bg-white/10'
+                  memberHint?.key === member.key
+                    ? memberHint.side === 'after'
+                      ? 'drop-edge-bottom bg-white/[0.06]'
+                      : 'drop-edge-top bg-white/[0.06]'
                     : ''
-                } ${
+                }${
                   tone === 'pending'
                     ? 'opacity-40 sweep-shimmer cursor-grab'
                     : offline
@@ -385,6 +409,40 @@ function GroupItem({ group, open, onToggle, onPick, onDeleteGroup, onRenameGroup
               </div>
             );
           })}
+          {/* 드래그 중에만 나타나 맨 뒤 자리를 직접 가리킨다 */}
+          {dragging && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMemberHint(null);
+                setDragOver(false);
+                if (!tailOver) setTailOver(true);
+              }}
+              onDragLeave={() => setTailOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setTailOver(false);
+                setDragOver(false);
+                try {
+                  const payload = JSON.parse(e.dataTransfer.getData('application/json'));
+                  if (payload?.type === 'history') {
+                    onDropHistory(group, payload, null, 'before');
+                  }
+                } catch {
+                  // 드래그 페이로드가 아니면 무시
+                }
+              }}
+              className={`text-[10px] text-center rounded-md py-1 transition-colors ${
+                tailOver
+                  ? 'bg-white/15 text-white'
+                  : 'text-zinc-600 border border-dashed border-white/10'
+              }`}
+            >
+              {tailOver ? '여기에 놓으면 맨 뒤에 추가됩니다' : '맨 뒤에 추가'}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -406,13 +464,15 @@ export default function Sidebar({
   onReorderMember,
   onPickMember,
   onDeleteMember,
-  onDropMember,
+  onDropHistory,
   onCopyM3u8,
   onOpenMultiView,
 }) {
   const [openGroups, setOpenGroups] = useState({});
   const [creating, setCreating] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  // 드래그가 진행 중인지. 시작/끝 이벤트가 여기서 통째로 올라온다.
+  const [dragging, setDragging] = useState(false);
 
   const toggle = (key) => setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -439,7 +499,11 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 flex flex-col gap-6 min-w-0">
+      <div
+        className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 flex flex-col gap-6 min-w-0"
+        onDragStart={() => setDragging(true)}
+        onDragEnd={() => setDragging(false)}
+      >
         {/* 그룹 (최상단) */}
         <section className="min-w-0">
           <SectionHeader
@@ -487,6 +551,7 @@ export default function Sidebar({
                   key={group.id}
                   group={group}
                   open={openGroups[group.id] ?? true}
+                  dragging={dragging}
                   onToggle={toggle}
                   onPick={onPickMember}
                   onDeleteGroup={onDeleteGroup}
@@ -495,7 +560,7 @@ export default function Sidebar({
                   onMoveMember={onMoveMember}
                   onReorderMember={onReorderMember}
                   onDeleteMember={onDeleteMember}
-                  onDropMember={onDropMember}
+                  onDropHistory={onDropHistory}
                   onCopyM3u8={onCopyM3u8}
                   onOpenMultiView={onOpenMultiView}
                   statuses={statuses}

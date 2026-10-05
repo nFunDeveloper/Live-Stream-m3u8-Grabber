@@ -197,7 +197,17 @@ function App() {
     setGroups(saveGroups(list));
   };
 
-  const dropMemberToGroup = (group, payload) => {
+  // 기준 멤버의 앞/뒤에 끼워 넣는다. 기준이 없으면 맨 뒤에 넣는다.
+  const insertRelative = (members, member, anchorKey, side) => {
+    const list = [...members];
+    const index = anchorKey ? list.findIndex((item) => item.key === anchorKey) : -1;
+    if (index === -1) return [...list, member];
+    list.splice(side === 'after' ? index + 1 : index, 0, member);
+    return list;
+  };
+
+  // 히스토리 항목을 그룹의 원하는 자리에 넣는다. anchorKey 없으면 맨 뒤.
+  const dropHistoryToGroup = (group, payload, anchorKey = null, side = 'before') => {
     const member = buildGroupMember(payload);
     if (group.members.some((item) => item.key === member.key)) {
       showToast('이미 그룹에 저장된 방송입니다');
@@ -206,13 +216,15 @@ function App() {
 
     setGroups(saveGroups(
       groups.map((item) =>
-        item.id === group.id ? { ...item, members: [member, ...item.members] } : item
+        item.id === group.id
+          ? { ...item, members: insertRelative(item.members, member, anchorKey, side) }
+          : item
       )
     ));
     showToast(`'${group.name}' 그룹에 저장했습니다`);
   };
 
-  const moveMemberToGroup = (fromGroupId, toGroupId, member, beforeKey = null) => {
+  const moveMemberToGroup = (fromGroupId, toGroupId, member, anchorKey = null, side = 'before') => {
     if (fromGroupId === toGroupId) return;
     const memberKey = entryKey(member.platform, member.streamer_id);
     const target = groups.find((item) => item.id === toGroupId);
@@ -227,31 +239,28 @@ function App() {
         )
         .map((item) => {
           if (item.id !== toGroupId || item.members.some((m) => m.key === memberKey)) return item;
-          const members = [...item.members];
-          const insertAt = beforeKey ? members.findIndex((m) => m.key === beforeKey) : -1;
-          const newMember = buildGroupMember(member);
-          if (insertAt >= 0) {
-            members.splice(insertAt, 0, newMember);
-          } else {
-            members.unshift(newMember);
-          }
-          return { ...item, members };
+          return {
+            ...item,
+            members: insertRelative(item.members, buildGroupMember(member), anchorKey, side),
+          };
         })
     ));
     showToast(`'${target.name}' 그룹으로 이동했습니다`);
   };
 
-  const reorderMember = (groupId, sourceKey, targetKey) => {
+  const reorderMember = (groupId, sourceKey, targetKey, side = 'before') => {
     if (sourceKey === targetKey) return;
     setGroups(saveGroups(
       groups.map((item) => {
         if (item.id !== groupId) return item;
         const fromIndex = item.members.findIndex((m) => m.key === sourceKey);
-        const toIndex = item.members.findIndex((m) => m.key === targetKey);
-        if (fromIndex === -1 || toIndex === -1) return item;
+        if (fromIndex === -1) return item;
+        // 뽑아낸 다음에 자리를 찾아야 아래로 옮길 때 한 칸 밀리지 않는다.
         const members = [...item.members];
         const [moved] = members.splice(fromIndex, 1);
-        members.splice(toIndex, 0, moved);
+        let toIndex = members.findIndex((m) => m.key === targetKey);
+        if (toIndex === -1) return { ...item, members: [...members, moved] };
+        members.splice(side === 'after' ? toIndex + 1 : toIndex, 0, moved);
         return { ...item, members };
       })
     ));
@@ -355,7 +364,7 @@ function App() {
     onReorderMember: reorderMember,
     onPickMember: (member) => handleGrab(null, member.url),
     onDeleteMember: deleteMember,
-    onDropMember: dropMemberToGroup,
+    onDropHistory: dropHistoryToGroup,
     onCopyM3u8: copyEntryM3u8,
     onOpenMultiView: (groupId) => setMultiViewGroupId(groupId),
   };
