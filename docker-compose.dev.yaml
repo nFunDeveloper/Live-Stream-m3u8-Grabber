@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile.backend
     environment:
       # 앱을 열 때 물어볼 비밀번호. 환경변수를 덮어쓰면 배포마다 바꿀 수 있다.
-      - APP_PASSWORD=${APP_PASSWORD:-calico}
+      - APP_PASSWORD=${APP_PASSWORD:-1322}
       # 세션 쿠키 서명 키. 이 값이 바뀌면 모두 다시 비밀번호를 쳐야 한다.
       - APP_SECRET_KEY=${APP_SECRET_KEY:-local-dev-secret}
     expose: ["10000"]

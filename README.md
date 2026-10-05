@@ -107,24 +107,26 @@ docker compose -f docker-compose.dev.yaml up --build
 
 ### 비밀번호 잠금
 
-앱을 열면 가운데 비밀번호 입력창이 뜨고, 통과해야 본 화면이 열린다.
+앱을 열면 가운데 인증번호 4자리 입력창이 뜨고, 통과해야 본 화면이 열린다.
 승인된 관계자만 쓸 수 있어야 하는 앱이라 주소를 알면 아무나 방송을 추출할 수
 있어서 막는 것이다. 통과한 뒤에는 서명된 세션 쿠키로 기억되므로 새로고침해도
 다시 묻지 않는다(30일).
 
 | 환경변수 | 기본값 | 설명 |
 |----------|--------|------|
-| `APP_PASSWORD` | `calico` | 화면을 여는 비밀번호. 바꾸려면 배포할 때 덮어쓴다 |
-| `APP_SECRET_KEY` | 고정 기본값 | 세션 쿠키 서명 키. 바꾸면 전원이 다시 비밀번호를 쳐야 한다 |
+| `APP_PASSWORD` | `1322` | 화면을 여는 인증번호. 숫자 4자리여야 화면과 맞는다 |
+| `APP_SECRET_KEY` | 고정 기본값 | 세션 쿠키 서명 키. 바꾸면 전원이 다시 인증번호를 쳐야 한다 |
 | `APP_STATE_FILE` | `/tmp/ls-grabber-auth.json` | 잠금 횟수·nonce가 저장되는 파일 |
 
 ```bash
-APP_PASSWORD='원하는비밀번호' docker compose -f docker-compose.dev.yaml up -d --build backend
+APP_PASSWORD='1234' docker compose -f docker-compose.dev.yaml up -d --build backend
 ```
 
-#### 비밀번호는 평문으로 오가지 않는다
+- 입력창은 4칸이므로 `APP_PASSWORD` 가 4자리가 아니면 시작 로그에 경고로 남는다.
 
-로그인할 때 서버가 일회용 `nonce`를 내주고, 브라우저는 `sha256(비밀번호 + ":" + nonce)`
+#### 인증번호는 평문으로 오가지 않는다
+
+로그인할 때 서버가 일회용 `nonce`를 내주고, 브라우저는 `sha256(인증번호 + ":" + nonce)`
 값만 보냅니다. 서버는 nonce 를 즉시 버리기 때문에 같은 증명을 다시 보낼 수 없습니다.
 
 ```

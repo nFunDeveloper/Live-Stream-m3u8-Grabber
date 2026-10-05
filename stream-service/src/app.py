@@ -35,6 +35,12 @@ if not auth_guard.is_enabled():
         "[auth] APP_PASSWORD 가 비어 있어 비밀번호 잠금이 꺼져 있다."
         " 외부에 노출되는 곳이라면 반드시 설정할 것"
     )
+elif len(os.getenv("APP_PASSWORD", "").strip()) != auth_guard.PIN_LENGTH:
+    logger.warning(
+        "[auth] APP_PASSWORD 가 %s자리가 아니다. 화면은 %s자리 입력칸이다",
+        len(os.getenv("APP_PASSWORD", "").strip()),
+        auth_guard.PIN_LENGTH,
+    )
 
 platforms = {
     'soop': Soop(),

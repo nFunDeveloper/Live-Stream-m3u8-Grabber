@@ -35,6 +35,9 @@ STATE_ENV = "APP_STATE_FILE"
 # 프론트엔드 정적 파일은 nginx가 직접 서빙하므로 여기에 걸리지 않는다.
 PUBLIC_PATHS = {"/api/auth/session", "/api/auth/challenge", "/api/auth/login"}
 
+# 화면은 숫자 4자리 칸으로 받는다. 이 길이를 벗어나면 시작 로그에 경고로 남는다.
+PIN_LENGTH = 4
+
 # nonce는 한 번만 쓸 수 있고, 이 시간 안에 쓰지 않으면 버린다.
 NONCE_TTL_SECONDS = 60
 MAX_NONCES = 4096
