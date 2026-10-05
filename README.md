@@ -123,6 +123,9 @@ APP_PASSWORD='1234' docker compose -f docker-compose.dev.yaml up -d --build back
 ```
 
 - 입력창은 4칸이므로 `APP_PASSWORD` 가 4자리가 아니면 시작 로그에 경고로 남는다.
+- 입력 칸은 `type="password"` 로 마스킹된다. 화면에 어깨너머로 보이는 일도,
+  브라우저가 폼 값을 되짚어 보여주는 일도 없다. 숫자 키패드는 `inputMode="numeric"`
+  으로 그대로 유지된다.
 
 #### 인증번호는 평문으로 오가지 않는다
 

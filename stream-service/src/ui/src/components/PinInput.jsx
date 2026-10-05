@@ -125,7 +125,9 @@ export default function PinInput({ boxes, onBoxesChange, disabled, onComplete, o
             onPaste={(e) => onPaste(index, e)}
             onFocus={(e) => e.target.select()}
             disabled={disabled}
-            type="text"
+            // 인증번호가 그대로 화면에 남지 않도록 마스킹한다. 숫자 키패드는
+            // inputMode 로 그대로 유지된다.
+            type="password"
             inputMode="numeric"
             // 문자 OTP가 오면 첫 칸에 통째로 들어오는데, 이를 각 칸에 나눠준다.
             autoComplete={index === 0 ? 'one-time-code' : 'off'}
