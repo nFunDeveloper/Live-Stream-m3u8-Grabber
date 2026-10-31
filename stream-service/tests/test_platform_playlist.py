@@ -592,6 +592,33 @@ class ChzzkQualitySelectionTests(unittest.TestCase):
         url = platform._Chzzk__get_track_url(track, "https://fcdn-livecloud.pstatic.net/master.m3u8")
         self.assertEqual(url, "https://fcdn-livecloud.pstatic.net/chzzk/720p/pl.m3u8")
 
+    def test_kr_only_broadcast_without_playback_raises_clear_error(self):
+        """국내 전용(스포츠 공식 중계) 방송은 서버가 국외면 livePlaybackJson 가
+        None 로 온다(실측). 이때 500 이 아니라 알아들을 수 있는 오류로 빠진다."""
+        from unittest.mock import patch
+        from platform_modules import chzzk as chz
+
+        def route(url):
+            if "live-detail" in url:
+                return {
+                    "content": {
+                        "status": "OPEN",
+                        "krOnlyViewing": True,
+                        "tvAppViewingPolicyType": "ALLOWED_FOR_CHEAT_KEY_ONLY",
+                        "livePlaybackJson": None,
+                        "previewPlaybackJson": None,
+                        "channel": {"channelId": "SP", "channelName": "치지직 배구 중계"},
+                        "liveTitle": "V리그 중계",
+                    }
+                }
+            raise AssertionError(f"unexpected url: {url}")
+
+        fake = self._fake_requests(route)
+        with patch.object(chz, 'requests', fake):
+            with self.assertRaises(ValueError) as ctx:
+                chz.Chzzk().get_live("SP", "auto")
+        self.assertIn("국내", str(ctx.exception))
+
     def test_decodes_embedded_cdn_url(self):
         platform = chzzk_module.Chzzk()
         encoded = base64.b64encode(b"https://cdn.example.com/x.m3u8?hdnts=t1").decode()

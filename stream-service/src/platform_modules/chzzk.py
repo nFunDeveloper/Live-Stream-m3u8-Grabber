@@ -49,7 +49,17 @@ class Chzzk(PlatformDefault):
         content = req.get("content") or {}
         info = self.__build_info(content)
 
-        if "livePlaybackJson" not in content:
+        if not content.get("livePlaybackJson"):
+            # 키가 없는 것과 값이 None 인 것 모두 여기로 온다. 공식 스포츠 중계는
+            # 국내 전용(krOnlyViewing)이라 서버가 국내 밖이면 재생 데이터를 아예
+            # 안 내려준다(실측: preview 도 없음). 이때 500 이 아니라 알아들을 수
+            # 있는 말로 보내야 사용자가 무슨 일인지 안다.
+            if content.get("krOnlyViewing"):
+                logger.warning(
+                    "[chzzk] kr-only broadcast has no playback (server outside KR?) chzzk_id=%s",
+                    chzzk_id,
+                )
+                raise ValueError("이 방송은 한국(국내 IP)에서만 시청할 수 있습니다.")
             self.__log_step("missing livePlaybackJson", req)
             return info
 
