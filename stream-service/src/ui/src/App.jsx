@@ -106,8 +106,6 @@ function App({ initialRemoteOpen = false }) {
   const [remoteOpen, setRemoteOpen] = useState(initialRemoteOpen);
   // 한 번 열면 폴링을 유지하기 위해 언마운트하지 않고 닫힌 상태로만 둔다
   const [remoteMounted, setRemoteMounted] = useState(initialRemoteOpen);
-  // 드로어가 닫힌 상태에서 방송을 드래그하면 자동으로 열리고 이 페이로드가 배정된다
-  const [remotePendingDrop, setRemotePendingDrop] = useState(null);
   // 확인은 앱이 뜬 시점에 한 번만 돌린다. 빈 화면이 다시 나타날 때마다
   // 다시 물어보면 잠깐의 깜빡임이 매번 반복된다.
   const { health, loading: healthLoading } = usePlatformHealth();
@@ -161,14 +159,6 @@ function App({ initialRemoteOpen = false }) {
     if (window.location.pathname.replace(/\/+$/, '').endsWith('/remote')) {
       window.history.replaceState(null, '', import.meta.env.BASE_URL);
     }
-  };
-
-  // 드로어 바깥에 방송(히스토리/그룹 멤버)을 떨어뜨리면 드로어를 열고 배정 대기시킨다.
-  // 닫힌 드로어에 드랍하면 조용히 사라지던 문제의 해결책.
-  const queueRemoteDrop = (payload) => {
-    setRemotePendingDrop(payload);
-    setRemoteMounted(true);
-    setRemoteOpen(true);
   };
 
   // 드로어가 열려 있으면 Esc로 닫는다
@@ -276,7 +266,7 @@ function App({ initialRemoteOpen = false }) {
   // 창 레벨 핸들러는 한 번만 걸어 둔다(handleGrab 등은 매 렌더 새 정의라 ref 로 최신을 가리킨다)
   const dragHandlersRef = useRef({});
   useEffect(() => {
-    dragHandlersRef.current = { showToast, handleGrab, addDroppedLinkToGroup, queueRemoteDrop };
+    dragHandlersRef.current = { showToast, handleGrab, addDroppedLinkToGroup };
   });
 
   useEffect(() => {
@@ -351,12 +341,13 @@ function App({ initialRemoteOpen = false }) {
       if (types.includes(INTERNAL_DRAG_TYPE)) {
         // 사이드바 안이면 Sidebar 내부 로직에 맡긴다
         if (e.target instanceof Element && !!e.target.closest('aside')) return;
-        // 사이드바 밖에 떨어진 방송 드래그 — 드로어를 열어 첫 빈 슬롯에 배정한다
+        // 사이드바 밖(메인 영역)에 떨어진 방송 드래그 — 드로어를 튀어나오게
+        // 하지 말고 기존처럼 그냥 그 방송을 메인 플레이어에서 재생한다
         try {
           const payload = JSON.parse(e.dataTransfer.getData(INTERNAL_DRAG_TYPE) || '{}');
-          if (payload.type === 'history' || payload.type === 'member') {
+          if ((payload.type === 'history' || payload.type === 'member') && payload.url) {
             e.preventDefault();
-            dragHandlersRef.current.queueRemoteDrop(payload);
+            dragHandlersRef.current.handleGrab(null, payload.url);
           }
         } catch {
           // JSON이 아니면 무시
@@ -838,13 +829,7 @@ function App({ initialRemoteOpen = false }) {
         }`}
       >
         <div className="h-full bg-[#08080a]/95 backdrop-blur-xl border-l border-white/10 rounded-l-2xl shadow-[-24px_0_60px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden">
-          {remoteMounted && (
-            <RemoteApp
-              onClose={closeRemote}
-              pendingDrop={remotePendingDrop}
-              onConsumePendingDrop={() => setRemotePendingDrop(null)}
-            />
-          )}
+          {remoteMounted && <RemoteApp onClose={closeRemote} />}
         </div>
       </div>
 

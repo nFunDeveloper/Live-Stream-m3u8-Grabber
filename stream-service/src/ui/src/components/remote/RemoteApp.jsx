@@ -7,7 +7,7 @@ import RemoteDashboard from './RemoteDashboard.jsx';
 // 원격 제어 드로어의 컨테이너. 로컬 에이전트 연결을 먼저 확보하고,
 // 연결되면 제어 패널을, 실패하면 트러블슈팅 화면을 보여준다.
 // 메인 페이지 오른쪽에서 슬라이드로 나오는 패널 전용 — 페이지 전체 렌더는 App이 한다.
-export default function RemoteApp({ onClose, pendingDrop, onConsumePendingDrop }) {
+export default function RemoteApp({ onClose }) {
   const [phase, setPhase] = useState('connecting'); // connecting | connected | unreachable
   const [agentInfo, setAgentInfo] = useState(null);
   const [failure, setFailure] = useState('');
@@ -44,14 +44,7 @@ export default function RemoteApp({ onClose, pendingDrop, onConsumePendingDrop }
   }, [phase, connect]);
 
   if (phase === 'connected' && agentInfo) {
-    return (
-      <RemoteDashboard
-        agentInfo={agentInfo}
-        onClose={onClose}
-        pendingDrop={pendingDrop}
-        onConsumePendingDrop={onConsumePendingDrop}
-      />
-    );
+    return <RemoteDashboard agentInfo={agentInfo} onClose={onClose} />;
   }
 
   const connecting = phase === 'connecting';

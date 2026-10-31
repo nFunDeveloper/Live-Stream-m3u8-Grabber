@@ -5,7 +5,7 @@ import { agentFetch } from './agent.js';
 import { BASE_PORT, MAX_SLOTS, MIN_SLOTS, emptySlot, grabLive, looksLikeM3u8, withPorts } from './slots.js';
 import StreamSlot from './StreamSlot.jsx';
 import LogPanel from './LogPanel.jsx';
-import { loadHistory, recordHistory } from '../../lib/storage.js';
+import { recordHistory } from '../../lib/storage.js';
 import { detectPlatform } from '../../lib/qualities.js';
 
 const STATUS_POLL_MS = 2500;
@@ -15,7 +15,7 @@ const SEED_SLOTS = 4;
 // 원격 제어 패널. 메인 페이지 오른쪽 드로어 안에서 렌더되며,
 // 왼쪽에 이미 있는 메인 사이드바(검색·히스토리)를 그대로 드래그 소스로 쓴다.
 // 모든 변경은 저장 버튼 없이 즉시 PUT /agent/config로 에이전트에 반영한다.
-export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onConsumePendingDrop }) {
+export default function RemoteDashboard({ agentInfo, onClose }) {
   const [slots, setSlots] = useState(null); // null = 로딩 중
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState('');
@@ -27,6 +27,8 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
   // 변경 직후 상태와 PUT 사이에 틈이 없도록 ref를 진실 원천으로 쓴다(빠른 연타 대응)
   const slotsRef = useRef(null);
   const putChainRef = useRef(Promise.resolve());
+  // 자동 재생 판단에 최신 세션 상태가 필요 — 폴링 결과를 ref에 미러링한다
+  const statusRef = useRef(null);
 
   const showToast = useCallback((message) => {
     setToastMessage(message);
@@ -67,6 +69,7 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
       try {
         const data = await agentFetch('/agent/status', { timeout: 3000 });
         if (cancelled) return;
+        statusRef.current = data;
         setStatus(data);
         setStatusError('');
       } catch (err) {
@@ -95,6 +98,32 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
 
   const firstEmptyIndex = () =>
     (slotsRef.current || []).findIndex((slot) => !slot.m3u8_url);
+
+  // 슬롯에 새 스트림이 들어가면 자동으로 재생한다.
+  // PUT 체인 뒤에 붙여 "설정 반영 → 시작/재시작" 순서를 보장하고,
+  // 실행 중이면 재시작(새 m3u8 적용), 정지/오류면 시작, 시작 중이면 건너뛴다.
+  const ensurePlaying = useCallback((port) => {
+    const session = statusRef.current?.sessions?.find((s) => s.port === port);
+    let action = 'start';
+    if (session) {
+      if (session.state === 'starting') return; // 이미 올라오는 중
+      action = (session.state === 'running' || session.state === 'waiting') ? 'restart' : 'start';
+    }
+    putChainRef.current = putChainRef.current
+      .then(() => agentFetch(
+        `/agent/sessions/${encodeURIComponent(String(port))}/${action}`,
+        { method: 'POST', timeout: 8000 }
+      ))
+      .then(() => agentFetch('/agent/status', { timeout: 3000 }))
+      .then((data) => {
+        statusRef.current = data;
+        setStatus(data);
+        showToast(action === 'restart'
+          ? `포트 ${port} 새 스트림으로 재시작`
+          : `포트 ${port} 재생 시작`);
+      })
+      .catch((err) => showToast(`포트 ${port} 자동 재생 실패: ${err.message}`));
+  }, [showToast]);
 
   // 슬롯에 방송 배정 — page_url이 있으면 grab으로 m3u8을 새로 뽑는다.
   // grab이 실패해도 히스토리에 저장된 m3u8이 있으면 그것을 쓴다(토큰 만료 가능성 안내).
@@ -134,32 +163,19 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
       } else {
         showToast(`${name} → 포트 ${BASE_PORT + index} 배정 완료`);
       }
+      // 배정이 PUT 에 반영되면 이어서 자동 재생까지
+      ensurePlaying(BASE_PORT + index);
     } catch (err) {
       showToast(`배정 실패: ${err.message}`);
     } finally {
       setResolving(false);
     }
-  }, [mutateSlots, showToast]);
+  }, [mutateSlots, ensurePlaying, showToast]);
 
   // 슬롯 드롭 (메인 사이드바 히스토리 / 외부 드래그)
   const handleDropPayload = useCallback((index, payload) => {
     assignToSlot(index, payload);
   }, [assignToSlot]);
-
-  // 드로어 밖(메인 영역)에서 방송을 떨어뜨리고 드로어가 열려온 경우 —
-  // 슬롯 목록 로딩이 끝난 뒤 첫 빈 슬롯에 배정하고 대기 상태를 소비한다.
-  // (드로어가 처음 열리는 순간에는 config 로딩이 아직 끝나지 않았다)
-  useEffect(() => {
-    if (!pendingDrop || slots === null) return;
-    const index = firstEmptyIndex();
-    if (index < 0) {
-      showToast('빈 슬롯이 없습니다 — 상단의 + 로 슬롯을 늘려주세요');
-    } else {
-      assignToSlot(index, pendingDrop);
-    }
-    onConsumePendingDrop?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingDrop, slots]);
 
   // URL 붙여넣기 → 첫 빈 슬롯에 배정 (m3u8이면 그대로, 방송 페이지면 grab)
   const handlePaste = useCallback(() => {
@@ -211,13 +227,15 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
         title: grabbed.title || item.title,
       } : item)));
       recordHistory(grabbed, slot.page_url);
-      showToast(`포트 ${slot.port} 토큰 갱신 완료`);
+      showToast(`포트 ${slot.port} 스트림 재등록 완료`);
+      // 싱크 밀림·오류 복구 작업의 완성: 새 URL 반영 후 세션까지 재시작
+      ensurePlaying(slot.port);
     } catch (err) {
       showToast(`갱신 실패: ${err.message}`);
     } finally {
       setResolving(false);
     }
-  }, [mutateSlots, showToast]);
+  }, [mutateSlots, ensurePlaying, showToast]);
 
   const handleRemove = useCallback((index) => {
     const slot = (slotsRef.current || [])[index];
@@ -238,7 +256,9 @@ export default function RemoteDashboard({ agentInfo, onClose, pendingDrop, onCon
         `포트 ${port} 재시작`
       );
       try {
-        setStatus(await agentFetch('/agent/status', { timeout: 3000 }));
+        const data = await agentFetch('/agent/status', { timeout: 3000 });
+        statusRef.current = data;
+        setStatus(data);
       } catch {
         // 다음 폴링이 알아서 채운다
       }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Spinner } from '@heroui/react';
-import { Loader2, Play, RotateCw, Square, Trash2, Wand2 } from 'lucide-react';
+import { Play, RefreshCw, RotateCw, Square, Trash2 } from 'lucide-react';
 import { platformMeta } from '../../lib/platforms.js';
 import { HISTORY_DRAG_TYPE } from './slots.js';
 
@@ -45,7 +45,9 @@ export default function StreamSlot({ slot, index, session, vmixAlive, busy, reso
     onDropPayload(index, payload);
   };
 
+  // 비활성 상태가 한눈에 보이게 (HeroUI 기본 opacity만으로는 구분이 약하다)
   const iconBtn = 'h-7 w-7 min-w-0 rounded-lg bg-white/[0.06] text-zinc-300 p-0';
+  const dim = (enabled) => (enabled ? '' : ' opacity-30 saturate-50');
 
   return (
     <div
@@ -125,9 +127,9 @@ export default function StreamSlot({ slot, index, session, vmixAlive, busy, reso
               size="sm"
               isDisabled={!canStart}
               onPress={() => onAction(slot.port, 'start')}
-              aria-label={`시작 — 포트 ${slot.port}`}
-              title="시작"
-              className={`${iconBtn} text-emerald-400`}
+              aria-label={`재생 — 포트 ${slot.port}`}
+              title={canStart ? '재생' : '이미 재생 중입니다'}
+              className={`${iconBtn} text-emerald-400${dim(canStart)}`}
             >
               <Play className="w-3 h-3" />
             </Button>
@@ -136,8 +138,8 @@ export default function StreamSlot({ slot, index, session, vmixAlive, busy, reso
               isDisabled={!canStop}
               onPress={() => onAction(slot.port, 'stop')}
               aria-label={`중지 — 포트 ${slot.port}`}
-              title="중지"
-              className={iconBtn}
+              title={canStop ? '중지' : '이미 정지 상태입니다'}
+              className={iconBtn + dim(canStop)}
             >
               <Square className="w-3 h-3" />
             </Button>
@@ -147,7 +149,7 @@ export default function StreamSlot({ slot, index, session, vmixAlive, busy, reso
               onPress={() => onAction(slot.port, 'restart')}
               aria-label={`재시작 — 포트 ${slot.port}`}
               title="재시작"
-              className={iconBtn}
+              className={iconBtn + dim(canRestart)}
             >
               <RotateCw className="w-3 h-3" />
             </Button>
@@ -155,11 +157,11 @@ export default function StreamSlot({ slot, index, session, vmixAlive, busy, reso
               <Button
                 size="sm"
                 onPress={() => onRefresh(index)}
-                aria-label={`토큰 갱신 — 포트 ${slot.port}`}
-                title="m3u8 토큰 갱신 (다시 추출)"
+                aria-label={`새로고침 — 포트 ${slot.port}`}
+                title="새로고침 — 새 m3u8로 다시 따서 세션을 재등록합니다 (싱크 밀림·오류 복구)"
                 className={iconBtn}
               >
-                <Wand2 className="w-3 h-3" />
+                <RefreshCw className="w-3 h-3" />
               </Button>
             )}
             <Button
