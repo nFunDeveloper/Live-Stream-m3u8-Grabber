@@ -8,6 +8,7 @@ import {
   MonitorPlay,
   Check,
   Lock,
+  MonitorSmartphone,
 } from 'lucide-react';
 import Sidebar from './components/Sidebar.jsx';
 import PlayerPanel from './components/PlayerPanel.jsx';
@@ -15,6 +16,7 @@ import SearchBar from './components/SearchBar.jsx';
 import MultiViewPanel from './components/MultiViewPanel.jsx';
 import PlatformHealthChips, { usePlatformHealth } from './components/PlatformHealthChips.jsx';
 import RecommendedBroadcasts from './components/RecommendedBroadcasts.jsx';
+import RemoteApp from './components/remote/RemoteApp.jsx';
 import {
   loadHistory,
   recordHistory,
@@ -81,7 +83,7 @@ function EmptyState({ health, loading }) {
   );
 }
 
-function App() {
+function App({ initialRemoteOpen = false }) {
   const [url, setUrl] = useState('');
   const [quality, setQuality] = useState('auto');
   const [result, setResult] = useState(null);
@@ -100,6 +102,12 @@ function App() {
   const [dragActive, setDragActive] = useState(false);
   const [dragOnSidebar, setDragOnSidebar] = useState(false);
   const [dragHasUrl, setDragHasUrl] = useState(false);
+  // 원격 제어 드로어 — /remote 로 들어오면 초기에 열려 있고, FAB로도 열 수 있다
+  const [remoteOpen, setRemoteOpen] = useState(initialRemoteOpen);
+  // 한 번 열면 폴링을 유지하기 위해 언마운트하지 않고 닫힌 상태로만 둔다
+  const [remoteMounted, setRemoteMounted] = useState(initialRemoteOpen);
+  // 드로어가 닫힌 상태에서 방송을 드래그하면 자동으로 열리고 이 페이로드가 배정된다
+  const [remotePendingDrop, setRemotePendingDrop] = useState(null);
   // 확인은 앱이 뜬 시점에 한 번만 돌린다. 빈 화면이 다시 나타날 때마다
   // 다시 물어보면 잠깐의 깜빡임이 매번 반복된다.
   const { health, loading: healthLoading } = usePlatformHealth();
@@ -141,6 +149,37 @@ function App() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToastMessage(''), 1800);
   };
+
+  const openRemote = () => {
+    setRemoteMounted(true);
+    setRemoteOpen(true);
+  };
+
+  const closeRemote = () => {
+    setRemoteOpen(false);
+    // /remote 로 직접 들어온 경우 URL도 메인으로 되돌려 뒷주소창이 어긋나지 않게 한다
+    if (window.location.pathname.replace(/\/+$/, '').endsWith('/remote')) {
+      window.history.replaceState(null, '', import.meta.env.BASE_URL);
+    }
+  };
+
+  // 드로어 바깥에 방송(히스토리/그룹 멤버)을 떨어뜨리면 드로어를 열고 배정 대기시킨다.
+  // 닫힌 드로어에 드랍하면 조용히 사라지던 문제의 해결책.
+  const queueRemoteDrop = (payload) => {
+    setRemotePendingDrop(payload);
+    setRemoteMounted(true);
+    setRemoteOpen(true);
+  };
+
+  // 드로어가 열려 있으면 Esc로 닫는다
+  useEffect(() => {
+    if (!remoteOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') closeRemote();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [remoteOpen]);
 
   const copyToClipboard = (value, showSuccessToast = false) => {
     if (!value) return;
@@ -237,7 +276,7 @@ function App() {
   // 창 레벨 핸들러는 한 번만 걸어 둔다(handleGrab 등은 매 렌더 새 정의라 ref 로 최신을 가리킨다)
   const dragHandlersRef = useRef({});
   useEffect(() => {
-    dragHandlersRef.current = { showToast, handleGrab, addDroppedLinkToGroup };
+    dragHandlersRef.current = { showToast, handleGrab, addDroppedLinkToGroup, queueRemoteDrop };
   });
 
   useEffect(() => {
@@ -260,12 +299,28 @@ function App() {
       heartbeat = setTimeout(stopHeartbeat, 450);
     };
 
+    const inRemoteDrawer = (e) =>
+      e.target instanceof Element && !!e.target.closest('[data-remote-drawer]');
+
     const onDragOver = (e) => {
+      // 원격 제어 드로어 안은 슬롯 카드가 자기 방식으로 처리한다.
+      // 여기서 dropEffect 를 none 으로 바꾸면 슬롯 드롭이 통째로 막힌다.
+      if (inRemoteDrawer(e)) return;
+
       // 사이드바 내부 드래그(히스토리/멤버 옮기기)는 Sidebar 가 자기 방식으로
       // 처리한다. 여기서 preventDefault 나 dropEffect 를 건드리면 기존
-      // 삽입선 표시가 깨지므로 아무것도 하지 않는다.
+      // 삽입선 표시가 깨지므로 사이드바 안이면 아무것도 하지 않는다.
       const types = Array.from(e.dataTransfer?.types || []);
-      if (types.includes(INTERNAL_DRAG_TYPE)) return;
+      if (types.includes(INTERNAL_DRAG_TYPE)) {
+        const inSidebar = e.target instanceof Element && !!e.target.closest('aside');
+        if (inSidebar) return;
+        // 사이드바 밖(메인 영역)에서는 방송 드랍을 받을 수 있게 열어둔다 —
+        // 안 그러면 브라우저가 drop 자체를 금지해 조용히 무시된다.
+        // dropEffect는 effectAllowed(그룹 멤버는 'move')와 호환되어야 한다.
+        e.preventDefault();
+        e.dataTransfer.dropEffect = e.dataTransfer.effectAllowed === 'move' ? 'move' : 'copy';
+        return;
+      }
 
       const zone = zoneOf(e);
       e.preventDefault(); // 없으면 드랍이 금지되고 웹뷰가 놓인 URL 로 이동한다
@@ -290,8 +345,24 @@ function App() {
     const onLeaveWindow = stopHeartbeat;
 
     const onDrop = (e) => {
+      if (inRemoteDrawer(e)) return; // 슬롯 카드의 드롭 핸들러가 처리한다
+
       const types = Array.from(e.dataTransfer?.types || []);
-      if (types.includes(INTERNAL_DRAG_TYPE)) return; // Sidebar 내부 로직에 맡긴다
+      if (types.includes(INTERNAL_DRAG_TYPE)) {
+        // 사이드바 안이면 Sidebar 내부 로직에 맡긴다
+        if (e.target instanceof Element && !!e.target.closest('aside')) return;
+        // 사이드바 밖에 떨어진 방송 드래그 — 드로어를 열어 첫 빈 슬롯에 배정한다
+        try {
+          const payload = JSON.parse(e.dataTransfer.getData(INTERNAL_DRAG_TYPE) || '{}');
+          if (payload.type === 'history' || payload.type === 'member') {
+            e.preventDefault();
+            dragHandlersRef.current.queueRemoteDrop(payload);
+          }
+        } catch {
+          // JSON이 아니면 무시
+        }
+        return;
+      }
 
       stopHeartbeat();
       e.preventDefault(); // 웹뷰가 놓인 URL 로 이동하는 것을 막는다
@@ -745,6 +816,37 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 우측 하단 원격 제어 진입 버튼 — 오른쪽 드로어를 연다 */}
+      <button
+        type="button"
+        onClick={openRemote}
+        title="원격 제어 — 로컬 릴레이 서버에 연결"
+        className="group fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-white/15 bg-white/10 backdrop-blur-xl px-4 py-2.5 text-sm font-semibold text-white shadow-2xl transition-all hover:bg-white/20 hover:border-white/30"
+      >
+        <MonitorSmartphone className="w-4 h-4 text-zinc-300 group-hover:text-white" />
+        <span className="hidden sm:inline text-xs">원격 제어</span>
+      </button>
+
+      {/* 원격 제어 드로어 — 메인 화면은 그대로 보이고, 사이드바는 가리지 않는다.
+          가로는 '사이드바 + 여백'을 제외한 나머지를 채운다(와이드에서는 최대폭 제한) */}
+      <div
+        data-remote-drawer
+        aria-hidden={!remoteOpen}
+        className={`fixed top-0 right-0 bottom-0 z-50 w-full lg:w-[calc(100vw-19rem)] lg:max-w-[1400px] transition-transform duration-300 ease-out ${
+          remoteOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
+        }`}
+      >
+        <div className="h-full bg-[#08080a]/95 backdrop-blur-xl border-l border-white/10 rounded-l-2xl shadow-[-24px_0_60px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden">
+          {remoteMounted && (
+            <RemoteApp
+              onClose={closeRemote}
+              pendingDrop={remotePendingDrop}
+              onConsumePendingDrop={() => setRemotePendingDrop(null)}
+            />
+          )}
+        </div>
+      </div>
 
       {/* 토스트 */}
       {toastMessage && (
