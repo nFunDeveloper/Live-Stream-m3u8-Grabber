@@ -1,9 +1,12 @@
+import base64
+import json
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
+from platform_modules import chzzk as chzzk_module
 from platform_modules.pandalive import Pandalive
 from platform_modules.platform_default import PlatformDefault
 from platform_modules.popkon import Popkon
@@ -19,9 +22,10 @@ MASTER_PLAYLIST = """#EXTM3U
 
 
 class FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, headers=None):
         self.status_code = status_code
         self.ok = status_code < 400
+        self.headers = headers or {}
         if isinstance(payload, str):
             self.text = payload
             self._json = None
@@ -426,6 +430,127 @@ auth_playlist.m3u8?aid=SD_AID,
             Soop.playlist_headers,
         )
         self.assertEqual(url, "")
+
+
+class ChzzkQualitySelectionTests(unittest.TestCase):
+    """치지직이 1080p 같은 특정 화질을 골라내지 못하던 문제의 회귀 테스트.
+
+    치지직은 live-detail 의 encodingTrack 에 영상 트랙 path 를 비워 두고, 마스터
+    플레이리스트의 variant 앞에 Akamai 토큰(hdntl=...)을 붙여 보낸다. 토큰이
+    경로 앞을 막으므로 "1080p/" 로 시작하는지 보는 구식 검사로는 어떤 화질도
+    찾을 수 없었다.
+    """
+
+    MASTER = (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:10\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=8384000,RESOLUTION=1920x1080\n"
+        "hdntl=exp=1~acl=*%2Fabc%2F*~hmac=aa11/1080p/chunklist.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=3192000,RESOLUTION=1280x720\n"
+        "hdntl=exp=1~acl=*%2Fabc%2F*~hmac=aa11/720p/chunklist.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=1692000,RESOLUTION=852x480\n"
+        "hdntl=exp=1~acl=*%2Fabc%2F*~hmac=aa11/480p/chunklist.m3u8\n"
+    )
+
+    @staticmethod
+    def _live_detail(path_prefix="nvelop-livecloud.pstatic.net", embed_cdn_url=""):
+        """영상 트랙 path 가 비어 있는 실제 응답 형태를 만든다.
+
+        embed_cdn_url 이 있으면 첫 트랙(1080p)의 p2pPath 에 base64 로 감싼 실제
+        CDN 주소를 끼워 넣는다 — 치지직이 하는 방식 그대로.
+        """
+        tracks = []
+        for index, (height, bitrate) in enumerate(
+            (("1080p", 8192000), ("720p", 3000000), ("480p", 1000000))
+        ):
+            tracks.append({
+                "encodingTrackId": height,
+                "path": "",
+                "p2pPath": f"/chzzk/lip2_kr/abc/{height}_playlist.m3u8",   # 토큰 없음
+                "videoWidth": 1920 if height == "1080p" else 1280,
+                "videoHeight": 1080 if height == "1080p" else 720,
+            })
+        if embed_cdn_url:
+            wrapped = base64.b64encode(embed_cdn_url.encode()).decode()
+            tracks[0]["p2pPath"] = f"/chzzk/1080p/pl.m3u8?cdn_url={wrapped}"
+        return {
+            "content": {
+                "status": "OPEN",
+                "liveTitle": "테스트 방송",
+                "channel": {"channelId": "CCC", "channelName": "테스터"},
+                "livePlaybackJson": json.dumps({
+                    "media": [{
+                        "path": f"https://{path_prefix}/chzzk/master.m3u8",
+                        "encodingTrack": tracks,
+                    }]
+                }),
+            }
+        }
+
+    @staticmethod
+    def _fake_requests(route):
+        class _Fake:
+            def get(self, url, headers=None, params=None, timeout=None):
+                return FakeResponse(route(url))
+
+        return _Fake()
+
+    def test_selects_variant_hidden_behind_akamai_token(self):
+        from unittest.mock import patch
+
+        def route(url):
+            if "live-detail" in url:
+                return self._live_detail()
+            if url.endswith("master.m3u8"):
+                return self.MASTER
+            raise AssertionError(f"unexpected url: {url}")
+
+        fake = self._fake_requests(route)
+        with patch.object(chzzk_module, "requests", fake):
+            info = chzzk_module.Chzzk().get_live("CCC", "1080p")
+
+        variant = info["m3u8_url"]
+        self.assertTrue(variant.startswith("https://nvelop-livecloud.pstatic.net/"))
+        self.assertIn("/1080p/chunklist.m3u8", variant)
+
+    def test_falls_back_to_cdn_url_hidden_in_p2p_path(self):
+        from unittest.mock import patch
+
+        # 마스터에서 화질을 못 찾는 경우(예: 목록이 비어 있을 때) cdn_url 로 되돌아간다
+        detail = self._live_detail(
+            embed_cdn_url="https://real-cdn.example.com/chzzk/1080p/playlist.m3u8?hdnts=token",
+        )
+
+        def route(url):
+            if "live-detail" in url:
+                return detail
+            if url.endswith("master.m3u8"):
+                return ""   # variant 가 하나도 없다
+            raise AssertionError(f"unexpected url: {url}")
+
+        fake = self._fake_requests(route)
+        with patch.object(chzzk_module, "requests", fake):
+            info = chzzk_module.Chzzk().get_live("CCC", "1080p")
+
+        self.assertEqual(info["m3u8_url"],
+                         "https://real-cdn.example.com/chzzk/1080p/playlist.m3u8?hdnts=token")
+
+    def test_track_url_uses_master_host_when_cdn_url_missing(self):
+        platform = chzzk_module.Chzzk()
+        track = {"path": "", "p2pPath": "/chzzk/720p/pl.m3u8"}
+        url = platform._Chzzk__get_track_url(track, "https://fcdn-livecloud.pstatic.net/master.m3u8")
+        self.assertEqual(url, "https://fcdn-livecloud.pstatic.net/chzzk/720p/pl.m3u8")
+
+    def test_decodes_embedded_cdn_url(self):
+        platform = chzzk_module.Chzzk()
+        encoded = base64.b64encode(b"https://cdn.example.com/x.m3u8?hdnts=t1").decode()
+        self.assertEqual(
+            platform._Chzzk__decode_embedded_url(f"/p/c.m3u8?cdn_url={encoded}"),
+            "https://cdn.example.com/x.m3u8?hdnts=t1",
+        )
+        # 감싼 값이 URL 이 아니거나 깨진 base64 면 빈 문자열을 돌려준다
+        self.assertEqual(platform._Chzzk__decode_embedded_url("/p/c.m3u8?cdn_url=!!"), "")
+        self.assertEqual(platform._Chzzk__decode_embedded_url("/p/c.m3u8"), "")
 
 
 if __name__ == "__main__":

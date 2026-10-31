@@ -1,3 +1,4 @@
+import base64
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from platform_modules.platform_default import PlatformDefault
@@ -98,7 +99,7 @@ class Chzzk(PlatformDefault):
                 m3u8_url = self.__get_variant_url_from_master(master_m3u8_url, normalized_quality)
 
             if not m3u8_url:
-                m3u8_url = self.__get_track_url(selected_track)
+                m3u8_url = self.__get_track_url(selected_track, master_m3u8_url)
 
             if not m3u8_url:
                 self.__log_step(
@@ -258,17 +259,46 @@ class Chzzk(PlatformDefault):
 
         return None
 
-    def __get_track_url(self, track):
+    def __get_track_url(self, track, master_m3u8_url=""):
         if track.get("path"):
             return track["path"]
 
-        if track.get("p2pPathUrlEncoding"):
-            return self.origin_stream_url + track["p2pPathUrlEncoding"]
+        p2p_path = track.get("p2pPath") or track.get("p2pPathUrlEncoding") or ""
+        if not p2p_path:
+            return ""
 
-        if track.get("p2pPath"):
-            return self.origin_stream_url + track["p2pPath"]
+        # p2pPath 쿼리에 base64 로 감싼 실제 CDN 주소가 있다. 여기에 hdnts 토큰까지
+        # 들어 있어 이걸 그대로 쓰는 게 확실하다.
+        embedded = self.__decode_embedded_url(p2p_path)
+        if embedded:
+            return embedded
 
-        return ""
+        # 없으면 마스터 플레이리스트가 쓴 호스트에 경로만 덧붙인다. 실제 CDN은
+        # fcdn-/nvelop- 등으로 갈리므로 호스트를 하드코딩하면 400이 난다.
+        origin = self.__origin_of(master_m3u8_url) or self.origin_stream_url
+        return origin + p2p_path
+
+    @staticmethod
+    def __origin_of(url):
+        if not url:
+            return ""
+        scheme, sep, rest = url.partition("//")
+        if not sep or not rest:
+            return ""
+        host = rest.split("/", 1)[0].split("?", 1)[0]
+        return f"{scheme}//{host}" if host else ""
+
+    @staticmethod
+    def __decode_embedded_url(p2p_path):
+        """p2pPath 안에 cdn_url 로 끼워 넣은 절대 주소를 풀어낸다."""
+        if "cdn_url=" not in p2p_path:
+            return ""
+        encoded = p2p_path.split("cdn_url=", 1)[1].split("&", 1)[0]
+        try:
+            decoded = base64.b64decode(encoded).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+        return decoded if decoded.startswith(("http://", "https://")) else ""
 
     def __get_variant_url_from_master(self, master_m3u8_url, quality):
         response = requests.get(master_m3u8_url, headers=self.headers, timeout=10)
@@ -295,18 +325,23 @@ class Chzzk(PlatformDefault):
             if variant_path.startswith("#"):
                 continue
 
-            if variant_path.startswith(f"{quality}/"):
-                variant_url = urljoin(master_m3u8_url, variant_path)
-                self.__log_step(
-                    "selected master playlist variant",
-                    {
-                        "quality": quality,
-                        "stream_info": line,
-                        "variant_path": variant_path,
-                        "variant_url": variant_url,
-                    },
-                )
-                return variant_url
+            # variant 경로 앞에는 Akamai 토큰이 붙어 있어 "1080p/" 로 시작하지 않는다.
+            # 경로 조각 하나하나를 놓고 화질 이름과 맞춘다.
+            # (구식 startswith 검사로는 어떤 화질도 못 찾는다.)
+            if quality not in variant_path.split("/"):
+                continue
+
+            variant_url = urljoin(master_m3u8_url, variant_path)
+            self.__log_step(
+                "selected master playlist variant",
+                {
+                    "quality": quality,
+                    "stream_info": line,
+                    "variant_path": variant_path,
+                    "variant_url": variant_url,
+                },
+            )
+            return variant_url
 
         self.__log_step("master playlist variant not found", {"quality": quality})
         return ""

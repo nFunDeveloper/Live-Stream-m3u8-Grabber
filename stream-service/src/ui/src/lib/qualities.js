@@ -1,6 +1,8 @@
 // 해상도 지원 범위는 각 플랫폼 API를 직접 조회해 확인한 값이다.
 // - chzzk: live-detail의 livePlaybackJson.media[].encodingTrack에서 트랙 id를 읽는다.
 //   실측 5개 방송 모두 ['144p','360p','480p','720p','1080p'] + audioOnly 동일.
+//   단, 영상 트랙의 path는 전부 비어 있고 audioOnly만 URL이 채워진다. 특정 화질의
+//   주소는 마스터 플레이리스트 variant에서 찾는다 (chzzk.py의 2차 폴백).
 // - cime/pandalive/popkon: master 플레이리스트의 RESOLUTION에서 variant를 고른다.
 //   실측 최댓값이 1920x1010이라 1080p는 정확히 매칭되지 않아 ABR로 폴백한다.
 // - soop: broad_stream_assign의 broad_key에 quality를 넣지만 SOOP가 이를 무시한다.
