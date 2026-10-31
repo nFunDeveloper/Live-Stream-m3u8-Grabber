@@ -25,6 +25,8 @@ from datetime import timedelta
 
 from flask import jsonify, request, session
 
+from stream_proxy import verify_share_token
+
 logger = logging.getLogger(__name__)
 
 PASSWORD_ENV = "APP_PASSWORD"
@@ -97,6 +99,18 @@ def _lockout_minutes(lockouts):
     """잠금 횟수가 늘어갈수록 기다리는 시간이 2배씩 늘어난다."""
     minutes = BASE_LOCKOUT_MINUTES * (2 ** max(lockouts - 1, 0))
     return min(minutes, MAX_LOCKOUT_MINUTES)
+
+
+def _stream_share_ok():
+    """프록시 링크의 서명이 요청의 u 주소에 유효한지.
+
+    request.args 는 이미 디코드된 값이라 여기서 다시 unquote 하면 안 된다.
+    스트림 URL 은 Akamai 토큰(%2F 등)이 그대로 들어가 있어 이중 디코드면
+    주소가 변조돼 서명 대조가 실패한다(실측).
+    """
+    target = request.args.get('u', '')
+    token = request.args.get('k', '')
+    return verify_share_token(target, token)
 
 
 def _peek_block(client):
@@ -178,6 +192,13 @@ def install(app):
             return None
         if session.get("authed"):
             return None
+
+        # 프록시 스트림 링크는 앱 밖(플레이어, 다른 브라우저)에서 붙여넣어 쓰는
+        # 일이 있다. 세션 쿠키가 없어도 그 주소의 서명된 토큰이 유효하면 그
+        # 주소 한 건만 통과시킨다. 서명이 없거나 옳지 않으면 401 이다.
+        if request.path == "/api/stream" and _stream_share_ok():
+            return None
+
         return jsonify({"error": "Unauthorized", "auth_required": True}), 401
 
     @app.route("/api/auth/session", methods=["GET"])

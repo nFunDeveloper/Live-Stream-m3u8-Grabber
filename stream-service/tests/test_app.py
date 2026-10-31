@@ -391,6 +391,75 @@ def _fake_upstream(body, content_type="application/vnd.apple.mpegurl"):
     return response
 
 
+class StreamShareTokenTests(unittest.TestCase):
+    """프록시 링크를 세션 없는 곳(플레이어·다른 브라우저)에서 열 수 있게 하는
+    서명 토큰 게이트를 확인한다. 토큰은 그 주소 하나에만 묶인다."""
+
+    UPSTREAM = (
+        "https://ex-nlive-streaming.navercdn.com/chzzk/lip2_kr/"
+        "cflexnmss2u0006/abc/xyz_playlist.m3u8?hdnts=st=1~exp=2"
+    )
+    PLAYLIST = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n"
+
+    def setUp(self):
+        self.client = app_module.app.test_client()
+        # 잠금 켠 상태에서 링크 복사 시나리오를 본다
+        state_dir = tempfile.mkdtemp()
+        self._env = patch.dict(os.environ, {
+            auth_guard.PASSWORD_ENV: "1322",
+            auth_guard.SECRET_ENV: "test-secret",
+            auth_guard.STATE_ENV: os.path.join(state_dir, "auth.json"),
+        })
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _proxy_url(self, upstream=None, with_token=True):
+        upstream = upstream or self.UPSTREAM
+        url = f"/api/stream?u={quote(upstream, safe='')}"
+        if with_token:
+            url += f"&k={stream_proxy.share_token(upstream)}"
+        return url
+
+    def test_share_token_allows_the_signed_url_without_login(self):
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = _fake_upstream(self.PLAYLIST)
+            response = self.client.get(self._proxy_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/api/stream?u=", response.get_data(as_text=True))
+
+    def test_missing_token_still_requires_login(self):
+        self.assertEqual(self.client.get(self._proxy_url(with_token=False)).status_code, 401)
+
+    def test_wrong_token_still_requires_login(self):
+        url = f"/api/stream?u={quote(self.UPSTREAM, safe='')}&k={'0' * 32}"
+        self.assertEqual(self.client.get(url).status_code, 401)
+
+    def test_token_is_bound_to_the_exact_url(self):
+        # 주소가 조금만 달라져도 서명이 유효하지 않다. 다른 주소에 원본의 토큰을 붙이면 게이트가 막는다
+        other = self.UPSTREAM.replace("abc/", "def/")
+        url = f"/api/stream?u={quote(other, safe='')}&k={stream_proxy.share_token(self.UPSTREAM)}"
+        self.assertEqual(self.client.get(url).status_code, 401)
+
+    def test_grab_result_url_carries_the_token(self):
+        proxy = stream_proxy.build_proxy_url(self.UPSTREAM)
+        self.assertIn(f"k={stream_proxy.share_token(self.UPSTREAM)}", proxy)
+        self.assertTrue(proxy.startswith("/api/stream?u="))
+
+    def test_token_survives_urls_that_already_contain_encoded_slashes(self):
+        # Akamai 토큰이 들어간 실제 주소는 %2F 등 인코딩된 문자가 그대로 들어 있다.
+        # args 를 이중 디코드하면 주소가 변조돼 서명이 깨진다(실측).
+        upstream = (
+            "https://nvelop-livecloud.pstatic.net/chzzk/lip2_kr/abc/xyz/"
+            "hdntl=exp=1~acl=*%2Fabc%2F*~hmac=aa/720p/xyz_playlist.m3u8?vp=x"
+        )
+        with patch.object(app_module, "open_stream") as open_stream:
+            open_stream.return_value = _fake_upstream(self.PLAYLIST)
+            response = self.client.get(self._proxy_url(upstream=upstream))
+
+        self.assertEqual(response.status_code, 200)
+
+
 class PlatformHealthApiTests(unittest.TestCase):
     """플랫폼 생존 확인이 '지금 스트림을 받을 수 있는가'를 그대로 답하는지 확인한다"""
 

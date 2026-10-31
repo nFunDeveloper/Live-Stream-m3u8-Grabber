@@ -4,9 +4,12 @@ SOOP CDN은 자신의 도메인에서만 Access-Control-Allow-Origin을 내려�
 hls.js의 세그먼트 요청이 실패한다. 이 모듈은 플레이리스트와 세그먼트를
 같은 origin(=우리 백엔드)으로 다시 노출해 CORS를 우회한다.
 """
+import hashlib
+import hmac
 import logging
+import os
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 
@@ -78,11 +81,43 @@ def is_allowed_url(url):
     )
 
 
-def build_proxy_url(target_url):
-    """프론트가 hls.js에 넘길 프록시 URL을 만든다."""
-    from urllib.parse import quote
+def share_token(target_url):
+    """이 URL 만을 프록시로 통과시키는 서명 토큰.
 
-    return '/api/stream?u=' + quote(target_url, safe='')
+    프록시 링크는 앱의 세션 쿠키가 없는 곳(플레이어, 다른 브라우저)에서 붙여넣어
+    써야 의미가 있다. 그렇다고 /api/stream 를 통째로 인증 밖에 두면 아무데나
+    프록시로 쓰는 오픈 릴레이가 되므로, 대신 '이 주소는 허가됐다'는 서명을
+    세션과 같은 SECRET_KEY 로 싣는다. 주소가 하나라도 다르면 서명이 맞지 않는다.
+    """
+    secret = os.getenv("APP_SECRET_KEY", "")
+    if not secret:
+        return ""
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        f"stream-share:{target_url}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return signature[:32]
+
+
+def verify_share_token(target_url, token):
+    """build_proxy_url 이 심은 서명이 이 URL 에 유효한지."""
+    if not target_url or not token:
+        return False
+    expected = share_token(target_url)
+    return bool(expected) and isinstance(token, str) and \
+        hmac.compare_digest(expected, token)
+
+
+def build_proxy_url(target_url):
+    """프론트가 hls.js에 넘길 프록시 URL을 만든다.
+
+    세션 쿠키가 있는 브라우저든, 쿠키가 없는 곳에서 붙여넣은 링크든 모두
+    열리도록 서명 토큰(k=)을 함께 싣는다.
+    """
+    token = share_token(target_url)
+    suffix = f"&k={token}" if token else ""
+    return '/api/stream?u=' + quote(target_url, safe='') + suffix
 
 
 def _referer_for(url):

@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CalendarClock,
   Eye,
+  Link2,
   Maximize2,
   RotateCw,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ function MetadataChip({ children, className = '' }) {
 export default function PlayerPanel({ result, showToast }) {
   const [playbackError, setPlaybackError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedProxy, setCopiedProxy] = useState(false);
   const [urlModalOpen, setUrlModalOpen] = useState(false);
   // 재생 실패 시 스트림을 처음부터 다시 잡기 위한 신호
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
@@ -32,6 +34,7 @@ export default function PlayerPanel({ result, showToast }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const copiedTimerRef = useRef(null);
+  const copiedProxyTimerRef = useRef(null);
 
   // 재생은 CORS 우회용 프록시를, 복사/표시는 원본 주소를 쓴다
   const m3u8Url = result.m3u8_url;
@@ -60,6 +63,11 @@ export default function PlayerPanel({ result, showToast }) {
     // manifest 파싱만으로는 준비된 게 아니다. 실제 프레임이 그려질 때까지 기다리고,
     // 그전에 끊기면 오류로 알려야 사용자가 재시도할 수 있다.
     let settled = false;
+    // 이전 버전에 없던 함수를 불러 에러 화면이 아니라 ReferenceError 로
+    // 깨지는 문제가 있었다(정의 미흡). 정확히 정의해 사용한다.
+    const showPlaybackError = (message = '스트림을 끊김 없이 받아오지 못했습니다. 다시 시도해 주세요.') => {
+      setPlaybackError(message);
+    };
     const settleError = () => {
       if (settled) return;
       settled = true;
@@ -143,6 +151,24 @@ export default function PlayerPanel({ result, showToast }) {
       });
   };
 
+  // 우리 서버(/api/stream) 경유 링크. 세션 쿠키가 없는 곳에서도 열리도록
+  // 백엔드가 꽂아 둔 서명 토큰(k=)이 URL 에 이미 들어 있다.
+  const copyProxyToClipboard = () => {
+    if (!playbackUrl) return;
+    const absolute = playbackUrl.startsWith('http')
+      ? playbackUrl
+      : `${window.location.origin}${playbackUrl}`;
+    navigator.clipboard.writeText(absolute)
+      .then(() => {
+        setCopiedProxy(true);
+        if (copiedProxyTimerRef.current) clearTimeout(copiedProxyTimerRef.current);
+        copiedProxyTimerRef.current = setTimeout(() => setCopiedProxy(false), 2000);
+      })
+      .catch(() => {
+        showToast('클립보드 복사에 실패했습니다');
+      });
+  };
+
   return (
     <div className="flex flex-col gap-3 animate-fade-in w-full">
       {/* 16:9 플레이어 */}
@@ -220,7 +246,7 @@ export default function PlayerPanel({ result, showToast }) {
           </div>
         </div>
 
-        {/* 액션: 복사 / 전체 URL 보기 */}
+        {/* 액션: 복사 / 우리 프록시 복사 / 전체 URL 보기 */}
         <div className="flex items-center gap-1.5 shrink-0">
           <Tooltip content={copied ? '복사 완료!' : 'M3U8 URL 복사'} closeDelay={500}>
             <Button
@@ -233,6 +259,23 @@ export default function PlayerPanel({ result, showToast }) {
               }`}
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            </Button>
+          </Tooltip>
+          {/* 우리 서버 경유 링크 — 세션 없는 플레이어·다른 브라우저에서 열리는 서명 토큰이 심겨 있다 */}
+          <Tooltip
+            content={copiedProxy ? '복사 완료!' : '우리 서버 경유 URL 복사 (어디서든 재생 가능)'}
+            closeDelay={500}
+          >
+            <Button
+              isIconOnly
+              onClick={copyProxyToClipboard}
+              className={`h-9 w-9 min-w-9 rounded-lg transition-all duration-300 border border-white/10 ${
+                copiedProxy
+                  ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                  : 'bg-white/5 text-zinc-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              {copiedProxy ? <Check className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
             </Button>
           </Tooltip>
           <Tooltip content="전체 URL 보기" closeDelay={500}>
