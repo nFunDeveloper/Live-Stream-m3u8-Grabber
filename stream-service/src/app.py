@@ -273,6 +273,53 @@ def search_api():
     return {"results": results}
 
 
+@app.route('/api/recommended', methods=['GET'])
+def recommended_api():
+    """각 사이트 메인이 내보내는 인기 생방송을 모아 시청자 순으로 정렬한다.
+
+    get_recommendations 를 구현한 플랫폼만 병렬로 조회한다. 어떤 플랫폼이
+    실패해도 나머지로 답한다 — 추천 목록이 전부 성공할 필요는 없다.
+    """
+    try:
+        limit = max(1, min(int(request.args.get('limit', '12')), 48))
+    except ValueError:
+        limit = 12
+
+    # SOOP는 별칭(soop/afreeca)이 같은 파서 클래스의 서로 다른 인스턴스로
+    # 등록돼 있어서 클래스 이름 기준으로 하나만 조회한다
+    sources, seen = [], set()
+    for name, platform in platforms.items():
+        if not hasattr(platform, 'get_recommendations'):
+            continue
+        kind = type(platform).__name__
+        if kind in seen:
+            continue
+        seen.add(kind)
+        sources.append((name, platform))
+
+    def run_one(name, platform):
+        try:
+            items = platform.get_recommendations(limit=limit) or []
+        except Exception:
+            logger.exception("[recommended] platform=%s failed", name)
+            return []
+        return items
+
+    results, sections = [], {}
+    if sources:
+        with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+            futures = [pool.submit(run_one, name, p) for name, p in sources]
+            for future in as_completed(futures):
+                items = future.result()
+                results.extend(items)
+                # 팝오버의 플랫폼별 탭에서 쓴다 — 플랫폼 단위 원본
+                if items and items[0].get('platform'):
+                    sections[items[0]['platform']] = items
+
+    results.sort(key=lambda item: item.get('viewers') or 0, reverse=True)
+    return {"results": results[:limit], "sections": sections}
+
+
 @app.route('/api/status', methods=['POST'])
 def status_api():
     body = request.get_json(silent=True) or {}

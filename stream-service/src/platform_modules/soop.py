@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 
 import requests
 from platform_modules.platform_default import PlatformDefault
@@ -29,6 +30,8 @@ class Soop(PlatformDefault):
     }
     # SOOP 웹 검색이 쓰는 API. Referer/Origin 이 없으면 빈 응답을 준다.
     search_api = 'https://sch.sooplive.com/api.php'
+    # SOOP 홈이 내보내는 인기 목록. 국내 원칙에 따라 한국어(ko_KR) 파일만 쓴다.
+    popular_list_url = 'https://static.file.sooplive.com/pc/ko_KR/main_popular_with_adult_list.js'
     search_headers = {
         'User-Agent': (
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
@@ -193,11 +196,58 @@ class Soop(PlatformDefault):
                 'viewers': self.__to_int(item.get('m_current_view_cnt')),
                 'thumbnail': thumbnail,
                 'started_at': item.get('broad_start') or '',
-                'url': f'https://play.sooplive.com/{user_id}',
+                'url': f'https://play.sooplive.co.kr/{user_id}',
             })
             if len(results) >= limit:
                 break
         return results
+
+    def get_recommendations(self, limit=12):
+        """SOOP 메인의 인기 라이브. 국내 소스만 허용한다 — SOOP 홈이 쓰는
+        한국어 정적 목록(ko_KR, 국내 static.file CDN)에서 받는다. 외국 서비스
+        경로(sooplive.com 의 en_US 목록)는 쓰지 않는다."""
+        # SOOP 홈과 같은 캐시 무력화 쿼리를 붙인다 — 파일이 주기적으로 다시 만들어진다
+        response = requests.get(
+            f'{self.popular_list_url}?_={int(time.time() * 1000)}',
+            headers=self.search_headers,
+            timeout=8,
+        )
+        response.raise_for_status()
+        data = (response.json() or {}).get('DATA') or []
+
+        results, seen_broad = [], set()
+        for group in data:
+            for item in (group.get('DATA') or []):
+                user_id = item.get('user_id') or ''
+                broad_no = item.get('broad_no') or ''
+                if not user_id or broad_no in seen_broad:
+                    continue
+                seen_broad.add(broad_no)
+                thumb = item.get('broad_thumb') or ''
+                if thumb.startswith('//'):
+                    thumb = f'https:{thumb}'
+                # PC/모바일 시청자를 합쳐 순위를 매긴다
+                viewers = self.__to_int(item.get('current_view_cnt')) + \
+                    self.__to_int(item.get('m_current_view_cnt'))
+                results.append({
+                    'platform': 'soop',
+                    'streamer_id': user_id,
+                    'streamer_name': item.get('user_nick') or item.get('station_name') or user_id,
+                    'title': item.get('broad_title') or '',
+                    'category': item.get('category_name') or '',
+                    'viewers': viewers,
+                    'thumbnail': thumb,
+                    'started_at': item.get('broad_start') or '',
+                    'url': f'https://play.sooplive.co.kr/{user_id}',
+                    # 방송자가 실제로 쓰는 해상도 — 목록에 그대로 실려 온다
+                    'resolution': item.get('broad_resolution') or '',
+                })
+                if len(results) >= limit * 3:
+                    break
+            if len(results) >= limit * 3:
+                break
+        results.sort(key=lambda item: item.get('viewers') or 0, reverse=True)
+        return results[:limit]
 
     def __fetch_search_suggestions(self, keyword):
         """방송자 이름 후보를 user_id 기준으로 색인한다. 실패해도 검색 전체는 계속된다."""
@@ -246,7 +296,10 @@ class Soop(PlatformDefault):
             url = (
                 f"{host}/broad_stream_assign.html"
                 f"?return_type=gs_cdn_mobile_web&use_cors=true"
-                f"&cors_origin_url=play.sooplive.com"
+                # 국내 원칙: 코스를 .co.kr 로 걸어야 응답 host 도 국내 CDN
+                # (mobile-web.stream.sooplive.co.kr) 로 배정된다. .com 을 걸면
+                # 같은 요청이 해외 CDN(.com) 을 돌려준다 (실측).
+                f"&cors_origin_url=play.sooplive.co.kr"
                 f"&broad_key={broad_key}-common-{quality}-hls&player_mode=live"
             )
             try:

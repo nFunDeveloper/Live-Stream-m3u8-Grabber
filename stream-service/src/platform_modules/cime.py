@@ -1,4 +1,6 @@
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -129,6 +131,78 @@ class Cime(PlatformDefault):
                 if len(results) >= limit:
                     return results
         return results
+
+    def get_recommendations(self, limit=12):
+        """ci.me 메인의 인기 라이브. sort=POPULAR 만 서버 정렬로 내려온다.
+
+        목록 응답에는 해상도가 없다. 각 항목의 master 플레이리스트(playback.url)
+        를 열어 RESOLUTION 중 가장 높은 것을 해상도로 채운다 — 몇 건 안 되므로
+        병렬로 읽고, 실패한 항목만 비워 둔다.
+        """
+        response = requests.get(
+            'https://ci.me/api/app/lives',
+            headers={**self.headers, 'Referer': 'https://ci.me/'},
+            params={'sort': 'POPULAR'},
+            timeout=8,
+        )
+        response.raise_for_status()
+        sections = ((response.json() or {}).get('data') or {}).get('sections') or []
+
+        results = []
+        for section in sections:
+            if section.get('type') != 'LIVE':
+                continue
+            for item in section.get('items') or []:
+                channel = item.get('channel') or {}
+                slug = channel.get('slug')
+                if not slug:
+                    continue
+                results.append({
+                    'platform': 'cime',
+                    'streamer_id': slug,
+                    'streamer_name': channel.get('name') or slug,
+                    'title': item.get('title') or '',
+                    'category': (item.get('category') or {}).get('name') or '',
+                    'viewers': item.get('curViewerCnt'),
+                    'thumbnail': item.get('imageUrl') or '',
+                    'started_at': item.get('openedAt') or '',
+                    'url': f'https://ci.me/@{slug}/live',
+                    'master_url': (item.get('playback') or {}).get('url') or '',
+                })
+                if len(results) >= limit:
+                    break
+            if len(results) >= limit:
+                break
+
+        with ThreadPoolExecutor(max_workers=min(6, max(len(results), 1))) as pool:
+            futures = {
+                pool.submit(self.__max_resolution, item.pop('master_url', '')): index
+                for index, item in enumerate(results)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    results[index]['resolution'] = future.result()
+                except Exception:
+                    results[index]['resolution'] = ''
+        return results
+
+    def __max_resolution(self, master_url):
+        """master 플레이리스트가 알려주는 variant 중 가장 높은 해상도."""
+        if not master_url:
+            return ""
+        headers = {
+            **self.headers,
+            "Accept": "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+            "Origin": "https://ci.me",
+        }
+        response = requests.get(master_url, headers=headers, timeout=8)
+        response.raise_for_status()
+        heights = re.findall(r"RESOLUTION=(\d+)x(\d+)", response.text or "")
+        if not heights:
+            return ""
+        best = max(heights, key=lambda pair: int(pair[1]))
+        return f"{best[0]}x{best[1]}"
 
     def __request_live_info(self, channel_slug):
         url = f"https://ci.me/api/app/channels/{channel_slug}/live"

@@ -153,6 +153,71 @@ class Chzzk(PlatformDefault):
                     break
         return results
 
+    def get_recommendations(self, limit=12):
+        """치지직 메인 라이브 피드. 검색 API와 달리 시청자 많은 순으로 정렬돼 온다."""
+        # 오프셋 0의 첫 페이지 — 치지직이 정해둔 대기열 순서(인기 위주)를 받는다.
+        response = requests.get(
+            'https://api.chzzk.naver.com/service/v1/lives',
+            headers=self.headers,
+            params={'offset': 0, 'size': limit},
+            timeout=8,
+        )
+        response.raise_for_status()
+        items = (response.json().get('content') or {}).get('data') or []
+
+        results = []
+        for item in items:
+            # 검색 응답과 달리 live/채널이 한 객체로 바로 온다
+            channel = item.get('channel') or {}
+            channel_id = channel.get('channelId') or ''
+            if not channel_id:
+                continue
+            thumbnail = (item.get('liveImageUrl') or item.get('defaultThumbnailImageUrl') or '')
+            results.append({
+                'platform': 'chzzk',
+                'streamer_id': channel_id,
+                'streamer_name': channel.get('channelName') or '',
+                'title': item.get('liveTitle') or '',
+                'category': item.get('liveCategoryValue') or '',
+                'viewers': item.get('concurrentUserCount'),
+                'thumbnail': thumbnail.replace('{type}', '480'),
+                'started_at': item.get('openDate') or '',
+                'url': f'https://chzzk.naver.com/live/{channel_id}',
+            })
+
+        # 라이브 피드에는 해상도가 없다. 각 방송의 live-detail(encodingTrack)에서
+        # 최고 해상도를 읽어 채운다. 건수가 제한적이어서 제한된 풀로 병렬로 읽고,
+        # 실패한 항목은 비워 둔다 (해상도 배지 없이 나가는 게 응답 실패보다 낫다).
+        with ThreadPoolExecutor(max_workers=min(8, max(len(results), 1))) as pool:
+            futures = {
+                pool.submit(self.__max_track_resolution, item['streamer_id']): index
+                for index, item in enumerate(results)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    results[index]['resolution'] = future.result()
+                except Exception:
+                    results[index]['resolution'] = ''
+        return results
+
+    def __max_track_resolution(self, channel_id):
+        """live-detail 의 encodingTrack 가장 높은 videoWidth x videoHeight."""
+        content = self.__fetch_live_detail(channel_id) or {}
+        raw = content.get('livePlaybackJson')
+        if not raw:
+            return ''
+        media = json.loads(raw).get('media') or []
+        tracks = [
+            track
+            for m in media
+            for track in (m.get('encodingTrack') or [])
+        ]
+        best = max(tracks, key=lambda t: (t.get('videoHeight') or 0), default=None)
+        if not best or not best.get('videoHeight'):
+            return ''
+        return f"{best.get('videoWidth') or 0}x{best.get('videoHeight')}"
+
     def __search_live_titles(self, keyword, limit):
         response = requests.get(
             'https://api.chzzk.naver.com/service/v1/search/lives',

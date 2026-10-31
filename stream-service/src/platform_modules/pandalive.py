@@ -13,6 +13,7 @@ class Pandalive(PlatformDefault):
     version = "1.0.0"
 
     api_url = "https://api.pandalive.co.kr/v1/live/play"
+    index_url = "https://api.pandalive.co.kr/v1/live/index"
     origin = "https://www.pandalive.co.kr"
     headers = {
         "Accept": "*/*",
@@ -101,6 +102,36 @@ class Pandalive(PlatformDefault):
         variant_url = self.get_variant_url_from_master(playlist_url, normalized_quality, headers)
         info["m3u8_url"] = variant_url or playlist_url
         return info
+
+    def get_recommendations(self, limit=12):
+        """팬더라이브 메인 라이브 인덱스. 시청자가 많은 대략의 순서로 내려온다."""
+        response = self.session.get(self.index_url, headers=self.headers, timeout=8)
+        response.raise_for_status()
+        items = (response.json() or {}).get("list") or []
+
+        results = []
+        for item in items:
+            user_id = item.get("userId") or ""
+            if not user_id:
+                continue
+            width = item.get("sizeWidth") or 0
+            height = item.get("sizeHeight") or 0
+            results.append({
+                'platform': 'pandalive',
+                'streamer_id': user_id,
+                'streamer_name': item.get('userNick') or user_id,
+                'title': item.get('title') or '',
+                'category': (item.get('category') if isinstance(item.get('category'), str) else '') or '',
+                'viewers': item.get('user'),
+                'thumbnail': item.get('thumbUrl') or '',
+                'started_at': item.get('startTime') or '',
+                'url': f'{self.origin}/live/{user_id}',
+                # 인덱스에 해상도가 실려 온다 (예: 1920x1080)
+                'resolution': f"{width}x{height}" if width and height else '',
+            })
+            if len(results) >= limit:
+                break
+        return results
 
     def __request_live_info(self, user_id):
         headers = {

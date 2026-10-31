@@ -14,6 +14,7 @@ import PlayerPanel from './components/PlayerPanel.jsx';
 import SearchBar from './components/SearchBar.jsx';
 import MultiViewPanel from './components/MultiViewPanel.jsx';
 import PlatformHealthChips, { usePlatformHealth } from './components/PlatformHealthChips.jsx';
+import RecommendedBroadcasts from './components/RecommendedBroadcasts.jsx';
 import {
   loadHistory,
   recordHistory,
@@ -38,6 +39,26 @@ const STEPS = [
   { icon: Download, label: 'M3U8 추출' },
   { icon: MonitorPlay, label: '바로 재생' },
 ];
+
+// 외부에서 끌어온 드래그에는 링크가 uri-list(링크 드래그)나 text/plain(주소창·텍스트
+// 드래그)로 실려 온다. 줄바꿈과 #주석을 걸러 첫 유효한 줄만 취득한다.
+function extractDroppedLink(dataTransfer) {
+  if (!dataTransfer) return '';
+  const raw =
+    dataTransfer.getData('text/uri-list') || dataTransfer.getData('text/plain');
+  return (
+    (raw || '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((s) => s && !s.startsWith('#')) || ''
+  );
+}
+
+// 사이드바 위로 방송 URL 을 드랍하면 이 그룹에 넣는다. 있으면 거기 쓰고,
+// 없으면 새로 만든다.
+const DROPPED_LINK_GROUP_NAME = '붙여넣은 링크';
+// 사이드바 내부 드래그(히스토리·멤버 옮기기)는 이 타입으로 식별된다(Sidebar.jsx setData 참조).
+const INTERNAL_DRAG_TYPE = 'application/json';
 
 function EmptyState({ health, loading }) {
   return (
@@ -72,6 +93,13 @@ function App() {
   const [statuses, setStatuses] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [multiViewGroupId, setMultiViewGroupId] = useState(null);
+  // 방송 링크를 메인 화면 어디에나 드래그-드랍하면 바로 추출한다(사이드바 제외).
+  // 드래그 진입/이탈 이벤트는 자식 요소를 지날 때마다 겹쳐 발생해 개수 세기로는
+  // 오버레이가 붙어버리는 실측 실패가 있었다. dragover 가 계속 오는 동안만
+  // 오버레이를 유지한다(심장박동) — 드래그가 어디서 끝나든 반드시 꺼진다.
+  const [dragActive, setDragActive] = useState(false);
+  const [dragOnSidebar, setDragOnSidebar] = useState(false);
+  const [dragHasUrl, setDragHasUrl] = useState(false);
   // 확인은 앱이 뜬 시점에 한 번만 돌린다. 빈 화면이 다시 나타날 때마다
   // 다시 물어보면 잠깐의 깜빡임이 매번 반복된다.
   const { health, loading: healthLoading } = usePlatformHealth();
@@ -91,6 +119,9 @@ function App() {
     [supportedKeys]
   );
   const disabledQualityCount = qualities.filter((item) => !item.supported).length;
+  // 드랍 오버레이 안내문에 쓴다(지금 선택된 해상도가 무엇인지 미리 보여준다)
+  const resolvedQualityLabel =
+    QUALITY_OPTIONS.find((option) => option.key === quality)?.label ?? quality;
 
   // 지금 선택된 해상도가 새 플랫폼에서 미지원이면 auto로 되돌린다.
   useEffect(() => {
@@ -158,6 +189,147 @@ function App() {
       setLoading(false);
     }
   };
+
+  // 드래그가 도는 곳이 어디인지 — main 이면 추출 접수처, aside 면 그룹에 넣는 접수처.
+  const zoneOf = (e) => {
+    if (!(e.target instanceof Element)) return 'none';
+    if (e.target.closest('main')) return 'main';
+    if (e.target.closest('aside')) return 'sidebar';
+    return 'none';
+  };
+
+  // 사이드바에 방송 URL 을 드랍하면 '붙여넣은 링크' 그룹에 넣는다. 그룹이
+  // 없으면 만들고, 이미 저장된 방송이면 넘어간다. 파싱(grab)은 비동기라
+  // 성공/실패는 토스트로 알린다.
+  const addDroppedLinkToGroup = async (link) => {
+    try {
+      const response = await fetch(`/api/grab?url=${encodeURIComponent(link)}&quality=${quality}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '추출에 실패했습니다.');
+
+      setHistory(recordHistory(data, link));
+      const member = buildGroupMember({ ...data, url: link });
+
+      const existing = groups.find((item) => item.name === DROPPED_LINK_GROUP_NAME);
+      if (existing) {
+        if (existing.members.some((item) => item.key === member.key)) {
+          showToast('이미 그룹에 저장된 방송입니다');
+          return;
+        }
+        setGroups(saveGroups(
+          groups.map((item) =>
+            item.id === existing.id
+              ? { ...item, members: [...item.members, member] }
+              : item
+          )
+        ));
+        showToast(`'${DROPPED_LINK_GROUP_NAME}' 그룹에 저장했습니다`);
+      } else {
+        const created = { id: `g_${Date.now()}`, name: DROPPED_LINK_GROUP_NAME, members: [member] };
+        setGroups(saveGroups([created, ...groups]));
+        showToast(`'${DROPPED_LINK_GROUP_NAME}' 그룹을 만들고 여기에 저장했습니다`);
+      }
+    } catch (err) {
+      showToast(`링크를 못 읽었습니다: ${err.message}`);
+    }
+  };
+
+  // 창 레벨 핸들러는 한 번만 걸어 둔다(handleGrab 등은 매 렌더 새 정의라 ref 로 최신을 가리킨다)
+  const dragHandlersRef = useRef({});
+  useEffect(() => {
+    dragHandlersRef.current = { showToast, handleGrab, addDroppedLinkToGroup };
+  });
+
+  useEffect(() => {
+    let heartbeat = null;
+
+    const stopHeartbeat = () => {
+      if (heartbeat) {
+        clearTimeout(heartbeat);
+        heartbeat = null;
+      }
+      setDragActive(false);
+      setDragOnSidebar(false);
+    };
+
+    // dragover 는 드래그 동안 계속 온다. 흐름이 끊기면(놓음/취소/창 밖 이탈)
+    // 이 타이머가 오버레이를 확실히 내린다.
+    const armHeartbeat = (extra) => {
+      if (extra) extra();
+      clearTimeout(heartbeat);
+      heartbeat = setTimeout(stopHeartbeat, 450);
+    };
+
+    const onDragOver = (e) => {
+      // 사이드바 내부 드래그(히스토리/멤버 옮기기)는 Sidebar 가 자기 방식으로
+      // 처리한다. 여기서 preventDefault 나 dropEffect 를 건드리면 기존
+      // 삽입선 표시가 깨지므로 아무것도 하지 않는다.
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (types.includes(INTERNAL_DRAG_TYPE)) return;
+
+      const zone = zoneOf(e);
+      e.preventDefault(); // 없으면 드랍이 금지되고 웹뷰가 놓인 URL 로 이동한다
+      e.dataTransfer.dropEffect = zone === 'none' ? 'none' : 'copy';
+
+      if (zone === 'main') {
+        armHeartbeat(() => {
+          setDragActive(true);
+          setDragOnSidebar(false);
+          setDragHasUrl(types.includes('text/uri-list') || types.includes('text/plain'));
+        });
+      } else if (zone === 'sidebar') {
+        armHeartbeat(() => {
+          setDragOnSidebar(true);
+          setDragActive(false);
+        });
+      } else {
+        armHeartbeat(() => { setDragActive(false); setDragOnSidebar(false); });
+      }
+    };
+
+    const onLeaveWindow = stopHeartbeat;
+
+    const onDrop = (e) => {
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (types.includes(INTERNAL_DRAG_TYPE)) return; // Sidebar 내부 로직에 맡긴다
+
+      stopHeartbeat();
+      e.preventDefault(); // 웹뷰가 놓인 URL 로 이동하는 것을 막는다
+
+      const dragHandlers = dragHandlersRef.current;
+      const isElementDrag = e.target instanceof Element;
+      const isMainDrop = isElementDrag && !!e.target.closest('main');
+      const isSidebarDrop = isElementDrag && !!e.target.closest('aside');
+      // main/aside 어느 접수처 위가 아니면(빈 배경 등) 아무것도 하지 않는다
+      if (!isMainDrop && !isSidebarDrop) return;
+
+      const link = extractDroppedLink(e.dataTransfer);
+      if (!link) return;
+      if (!detectPlatform(link)) {
+        dragHandlers.showToast('여기는 방송 URL만 받습니다. 치지직/SOOP/ci.me/팬더라이브/팝콘TV 링크를 놓아주세요.');
+        return;
+      }
+
+      if (isMainDrop) {
+        // 현재 선택된 해상도(quality 상태) 그대로 추출한다
+        dragHandlers.handleGrab(null, link);
+      } else {
+        // 사이드바 — '붙여넣은 링크' 그룹에 넣는다(없으면 만든다)
+        dragHandlers.showToast('방송 정보를 불러오는 중…');
+        dragHandlers.addDroppedLinkToGroup(link);
+      }
+    };
+
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onLeaveWindow);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      clearTimeout(heartbeat);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onLeaveWindow);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
 
   const createGroup = (name) => {
     if (groups.some((group) => group.name === name)) {
@@ -396,8 +568,31 @@ function App() {
         </div>
       )}
 
-      {/* 메인 영역 */}
+      {/* 메인 영역 — 사이드바를 제외한 전체가 방송 링크 드랍 접수처다.
+          핸들러는 창(window) 레벨 effect 에서 걸어 둔다 */}
       <main className="relative z-10 flex-1 min-w-0 overflow-y-auto flex flex-col items-center">
+        {/* 드래그 중 오버레이 — 메인 전체에 점선 틀을 깐다. pointer-events-none 을
+            반드시 유지한다, 이 자리가 dragover 를 가로채면 심장박동이 끊어져
+            오버레이가 반짝인다. 모바일 드로어(aside) 위는 씌우지 않는다 */}
+        {dragActive && (
+          <div className="fixed inset-0 z-40 md:left-72 pointer-events-none">
+            <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
+            <div className="absolute inset-3 md:inset-4 rounded-2xl border-2 border-dashed border-white/60 flex flex-col items-center justify-center gap-2 text-center p-6">
+              <Link2 className="w-9 h-9 text-white" />
+              <p className="text-sm font-semibold text-white leading-relaxed">
+                {dragHasUrl
+                  ? '메인 화면 아무 곳에나 놓으면 지금 선택한 해상도로 바로 추출합니다'
+                  : '링크를 메인 화면에 놓아주세요'}
+              </p>
+              <p className="text-xs text-zinc-400">
+                치지직 · SOOP · ci.me · 팬더라이브 · 팝콘TV
+              </p>
+              <p className="text-[10px] text-zinc-500">
+                해상도: {resolvedQualityLabel} · 사이드바는 제외
+              </p>
+            </div>
+          </div>
+        )}
         <header className="sticky top-0 z-30 w-full h-14 px-4 flex items-center gap-3 border-b border-white/5 bg-[#050505]/80 backdrop-blur-xl">
           <button
             type="button"
@@ -414,10 +609,11 @@ function App() {
             <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
             Live Stream Toolkit
           </span>
-          {/* 실시간 방송 검색 */}
-          <div className="flex-1 min-w-0 max-w-xl ml-auto">
+          {/* 실시간 방송 검색 — 추천 방송 버튼과 나란히 두기 위해 폭을 줄였다 */}
+          <div className="flex-1 min-w-0 max-w-md ml-auto">
             <SearchBar onPick={(item) => handleGrab(null, item.url)} />
           </div>
+          <RecommendedBroadcasts onPick={(item) => handleGrab(null, item.url)} />
           <button
             type="button"
             onClick={requestLock}
@@ -533,6 +729,22 @@ function App() {
           </p>
         </footer>
       </main>
+
+      {/* 드래그 중 사이드바 오버레이 — '붙여넣은 링크' 그룹에 넣는 접수처 */}
+      {dragOnSidebar && (
+        <div className="fixed inset-y-0 left-0 w-72 max-w-[80vw] z-50 pointer-events-none">
+          <div className="absolute inset-0 bg-black/65 backdrop-blur-[2px]" />
+          <div className="absolute inset-3 md:inset-4 rounded-2xl border-2 border-dashed border-white/60 flex flex-col items-center justify-center gap-2 text-center p-4">
+            <Link2 className="w-8 h-8 text-white" />
+            <p className="text-sm font-semibold text-white leading-relaxed">
+              여기에 놓으면 '{DROPPED_LINK_GROUP_NAME}' 그룹에 넣어요
+            </p>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              그룹이 없으면 만들고, 방송 정보를 불러와 저장합니다
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 토스트 */}
       {toastMessage && (

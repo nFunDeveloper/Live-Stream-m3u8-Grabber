@@ -239,7 +239,7 @@ class SoopSearchTests(unittest.TestCase):
         self.assertEqual(item['category'], '리그 오브 레전드')
         self.assertEqual(item['viewers'], 2421)
         self.assertEqual(item['started_at'], '2026-10-04 18:07:32')
-        self.assertEqual(item['url'], 'https://play.sooplive.com/joey1114')
+        self.assertEqual(item['url'], 'https://play.sooplive.co.kr/joey1114')
 
     def test_search_falls_back_to_suggestion_profile(self):
         # 라이브 검색이 주는 이미지/닉네임이 비면 자동완성 후보로 채운다
@@ -364,6 +364,14 @@ class SoopStatusTests(unittest.TestCase):
 class SoopTests(unittest.TestCase):
     """SOOP는 .co.kr CNAME이 끊겨 있어 .com 으로 폴백해야 한다"""
 
+    @staticmethod
+    def _fake_requests(route):
+        class _Fake:
+            def get(self, url, headers=None, params=None, timeout=None):
+                return FakeResponse(route(url))
+
+        return _Fake()
+
     # SOOP master는 화질명(NAME=hd)과 끝의 쉼표가 붙은 상대 경로로 내려온다
     SOOP_MASTER = """#EXTM3U
 #EXT-X-STREAM-INF:NAME=hd,BANDWIDTH=777600,RESOLUTION=960x540
@@ -383,7 +391,9 @@ auth_playlist.m3u8?aid=SD_AID,
         class _Fake:
             def get(self, url, headers=None, timeout=None):
                 tried.append(url)
-                if 'sooplive.co.kr' in url:
+                # 관리자 호스트의 DNS 실패만 흉내 낸다. cors 파라미터도 .co.kr 를
+                # 담게 되었으므로(국내 원칙) 문자열 전체가 아니라 호스트로 판별한다
+                if 'livestream-manager.sooplive.co.kr' in url:
                     raise error_type("Name or service not known")
                 return FakeResponse({"result": "1", "view_url": "https://cdn.test/auth.m3u8"})
 
@@ -430,6 +440,47 @@ auth_playlist.m3u8?aid=SD_AID,
             Soop.playlist_headers,
         )
         self.assertEqual(url, "")
+
+    def test_recommendations_served_from_korean_list(self):
+        import requests
+        from unittest.mock import patch
+        from platform_modules import soop as soop_module
+
+        def route(url):
+            # 국내 원칙: ko_KR 목록만 쓴다. 외국(en_US) 파일을 부르면 실패로 간다
+            assert "/pc/ko_KR/" in url, f"외국 경로 사용됨: {url}"
+
+            def item(user_id, nick, view, m_view, title="제목", reso="1920x1080"):
+                return {
+                    "broad_no": f"{user_id}no", "user_id": user_id,
+                    "user_nick": nick, "broad_title": title,
+                    "current_view_cnt": str(view), "m_current_view_cnt": str(m_view),
+                    "broad_resolution": reso, "category_name": "게임",
+                    "broad_thumb": "//liveimg.sooplive.com/m/1",
+                }
+
+            # 같은 방송이 두 섹션에 걸쳐 중복 노출되는 형태 (SOOP 실제 동작)
+            return {"DATA": [
+                {"SECTION_CODE": "POP_LIVE_01", "DATA": [
+                    item("aaa", "가방사", 800, 100),
+                    item("bbb", "나가는", 4000, 200),
+                    item("", "아이디없음", 9999, 0),      # user_id 없는 항목은 버린다
+                ]},
+                {"SECTION_CODE": "POP_PREVIEW", "DATA": [
+                    item("aaa", "가방사", 800, 100),      # 중복 broad_no → 한 번만
+                    item("ccc", "다중공백", 900, 50),
+                ]},
+            ]}
+
+        fake = self._fake_requests(route)
+        with patch.object(soop_module, 'requests', fake):
+            results = soop_module.Soop().get_recommendations(limit=8)
+
+        self.assertEqual([r['streamer_id'] for r in results], ["bbb", "ccc", "aaa"])  # 시청자 내림
+        top = results[0]
+        self.assertEqual(top['viewers'], 4200)                 # PC+모바일 합산
+        self.assertEqual(top['url'], "https://play.sooplive.co.kr/bbb")  # 국내 도메인
+        self.assertEqual(top['thumbnail'], "https://liveimg.sooplive.com/m/1")  # 스킴 보정
 
 
 class ChzzkQualitySelectionTests(unittest.TestCase):
