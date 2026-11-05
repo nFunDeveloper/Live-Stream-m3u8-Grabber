@@ -13,10 +13,10 @@ docker compose -f docker-compose.dev.yaml up -d --build backend
 docker compose -f docker-compose.dev.yaml up -d          # nginx/vite 상태 재확인 (위 명령이 놓칠 때가 있다)
 
 # 2) 매트릭스 실행 — 외부 의존성 없음 (urllib 만 사용)
-python3 stream-service/tests/quality_matrix_probe.py               # 전체 플랫폼
-python3 stream-service/tests/quality_matrix_probe.py --platform chzzk
-python3 stream-service/tests/quality_matrix_probe.py --pin 1322    # PIN 변경 시
-python3 stream-service/tests/quality_matrix_probe.py --base http://127.0.0.1:10000
+python3 stream-service/tests/quality_matrix_probe.py --pin 123456               # 전체 플랫폼
+python3 stream-service/tests/quality_matrix_probe.py --pin 123456 --platform chzzk
+python3 stream-service/tests/quality_matrix_probe.py --pin 123456 --base http://127.0.0.1:10000
+# 인증번호는 매일 00시에 바뀐다 — 백엔드 로그(docker compose logs backend)나 관리용 텔레그램에서 확인
 ```
 
 출력 판정:
@@ -92,7 +92,8 @@ pc_web/mobile_web × cors .com/.co.kr × player_mode live/landing/dash)을 모�
 
 ## 주의
 
-- 인증: 개발 PIN 기본 1322. 로그인은 `/api/auth/challenge` → `sha256(핀:nonce)`.
+- 인증: 인증번호는 매일 00시에 바뀐 6자리 랜덤 값이다(백엔드 로그 또는 관리용
+  텔레그램에서 확인). 로그인은 `/api/auth/challenge` → `sha256(핀:nonce)`.
   필드는 `proof`(password 가 아니다). 실패하면 attempts_left 소진.
 - 멀티뷰와 화질 캡(`MULTIVIEW_MAX_HEIGHT=480`)은 별개. 매트릭스는 단일 재생 기준으로
   본 것이므로 멀티뷰 상한이 화면에 나온 480p 와 혼동하지 않는다.

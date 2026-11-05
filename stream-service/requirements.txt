@@ -1,3 +1,5 @@
 Flask==3.1.1
 requests==2.32.4
 gunicorn==23.0.0
+# 컨테이너(Debian slim)에 시간대 데이터가 없어 zoneinfo(00시 갱신 기준)가 쓰이도록
+tzdata==2026.6

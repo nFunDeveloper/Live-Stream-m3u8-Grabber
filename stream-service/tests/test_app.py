@@ -4,10 +4,16 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import timedelta
 from unittest.mock import Mock, patch
 from urllib.parse import quote
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+# 테스트는 기본적으로 잠금이 꺼진 상태를 쓴다. 잠금이 필요한 클래스는 setUp 에서
+# APP_AUTH=on 으로 다시 켠다. (인증번호는 이제 APP_PASSWORD 가 아니라 상태 파일의
+# 날짜별 키로 관리되므로, 잠금 스위치도 별도 환경변수로 바뀌었다)
+os.environ["APP_AUTH"] = "off"
 
 import app as app_module
 import auth_guard
@@ -406,7 +412,7 @@ class StreamShareTokenTests(unittest.TestCase):
         # 잠금 켠 상태에서 링크 복사 시나리오를 본다
         state_dir = tempfile.mkdtemp()
         self._env = patch.dict(os.environ, {
-            auth_guard.PASSWORD_ENV: "1322",
+            auth_guard.AUTH_ENV: "on",
             auth_guard.SECRET_ENV: "test-secret",
             auth_guard.STATE_ENV: os.path.join(state_dir, "auth.json"),
         })
@@ -600,7 +606,16 @@ class PlatformHealthProbeTests(unittest.TestCase):
 
 
 class AuthGuardTests(unittest.TestCase):
-    """비밀번호 잠금은 APP_PASSWORD 환경변수에 따라 켜지고 꺼진다."""
+    """인증번호 잠금은 APP_AUTH 로 켜지고 꺼진다.
+
+    인증번호는 APP_PASSWORD 가 아니라 상태 파일의 날짜별 키로 관리된다.
+    오늘자·전일자 두 인증번호를 모두 허용한다.
+    """
+
+    # 오늘자로 심어 두는 고정 인증번호. 오답과 구분되도록 6자리로 잡는다.
+    TODAY_PIN = "111111"
+    YESTERDAY_PIN = "222222"
+    WRONG_PIN = "999999"
 
     def setUp(self):
         handle, self.state_file = tempfile.mkstemp(prefix="ls-auth-test-")
@@ -608,22 +623,38 @@ class AuthGuardTests(unittest.TestCase):
         os.unlink(self.state_file)  # 빈 상태 파일로 시작
         self.env = patch.dict(
             os.environ,
-            {"APP_PASSWORD": "1322", "APP_STATE_FILE": self.state_file},
+            {"APP_AUTH": "on", "APP_STATE_FILE": self.state_file},
         )
         self.env.start()
         self.client = app_module.app.test_client()
+        self._seed_password(self.TODAY_PIN)
 
     def tearDown(self):
         self.env.stop()
         if os.path.exists(self.state_file):
             os.unlink(self.state_file)
 
+    def _seed_password(self, pin, date=None):
+        """상태 파일에 특정 날짜의 인증번호를 심는다.
+
+        백그라운드 갱신 스레드와 겹치지 않도록 같은 파일 락 안에서 쓴다.
+        """
+        date = date or auth_guard._date_str()
+        with auth_guard._locked_state() as state:
+            state["passwords"][date] = pin
+        return date
+
+    def _passwords(self):
+        with auth_guard._locked_state() as state:
+            return dict(state["passwords"])
+
     def _nonce(self):
         response = self.client.get("/api/auth/challenge")
         self.assertEqual(response.status_code, 200)
         return response.json["nonce"]
 
-    def _login(self, password="1322", nonce=None):
+    def _login(self, password=None, nonce=None):
+        password = self.TODAY_PIN if password is None else password
         nonce = self._nonce() if nonce is None else nonce
         proof = hashlib.sha256(f"{password}:{nonce}".encode()).hexdigest()
         return self.client.post(
@@ -648,7 +679,7 @@ class AuthGuardTests(unittest.TestCase):
                 self.assertTrue(response.json.get("auth_required"))
 
     def test_wrong_password_is_rejected(self):
-        response = self._login(password="9999")
+        response = self._login(password=self.WRONG_PIN)
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json["error"], "invalid_password")
 
@@ -673,7 +704,7 @@ class AuthGuardTests(unittest.TestCase):
 
     def test_nonce_is_consumed_even_on_failure(self):
         nonce = self._nonce()
-        self.assertEqual(self._login(password="9999", nonce=nonce).status_code, 401)
+        self.assertEqual(self._login(password=self.WRONG_PIN, nonce=nonce).status_code, 401)
         # 틀린 시도가 nonce 를 태워 버린다
         self.assertEqual(self._login(nonce=nonce).status_code, 400)
 
@@ -690,7 +721,7 @@ class AuthGuardTests(unittest.TestCase):
 
     def test_five_failures_lock_out_for_ten_minutes(self):
         for attempt in range(auth_guard.MAX_ATTEMPTS):
-            response = self._login(password="9999")
+            response = self._login(password=self.WRONG_PIN)
             self.assertEqual(response.status_code, 401, f"attempt {attempt}")
             self.assertEqual(response.json["attempts_left"], auth_guard.MAX_ATTEMPTS - attempt - 1)
 
@@ -705,7 +736,7 @@ class AuthGuardTests(unittest.TestCase):
         """elapsed 초 시점에서 실패를 채워 잠금을 걸고, 걸린 시간을 돌려준다."""
         with patch.object(auth_guard.time, "time", return_value=time.time() + elapsed):
             for _ in range(auth_guard.MAX_ATTEMPTS):
-                self._login(password="9999")
+                self._login(password=self.WRONG_PIN)
             blocked = self._login()
         self.assertEqual(blocked.status_code, 429)
         return blocked.json["lockout_minutes"]
@@ -731,36 +762,123 @@ class AuthGuardTests(unittest.TestCase):
 
     def test_success_resets_the_failure_counter(self):
         for _ in range(auth_guard.MAX_ATTEMPTS - 1):
-            self._login(password="9999")
+            self._login(password=self.WRONG_PIN)
         self.assertEqual(self._login().status_code, 200)
 
         # 누적은 초기화됐으므로 다시 4번까지만 틀려도 잠기지 않는다
         for _ in range(auth_guard.MAX_ATTEMPTS - 1):
-            response = self._login(password="9999")
+            response = self._login(password=self.WRONG_PIN)
             self.assertEqual(response.status_code, 401)
         self.assertEqual(self._login().status_code, 200)
 
     def test_success_after_lockout_clears_the_record(self):
         for _ in range(auth_guard.MAX_ATTEMPTS):
-            self._login(password="9999")
+            self._login(password=self.WRONG_PIN)
         self.assertEqual(self._login().status_code, 429)
 
         with patch.object(auth_guard.time, "time", return_value=time.time() + 11 * 60):
             self.assertEqual(self._login().status_code, 200)
         # 누적 횟수가 0으로 돌아갔는지 다음 실패가 4회째까지 잠기지 않는지로 본다
-        self.assertEqual(self._login(password="9999").json["attempts_left"], 4)
+        self.assertEqual(self._login(password=self.WRONG_PIN).json["attempts_left"], 4)
 
     def test_logout_locks_again(self):
         self._login()
         self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
         self.assertFalse(self.client.get("/api/auth/session").json["authed"])
 
-    def test_guard_is_disabled_without_password(self):
-        # 환경변수가 비면 잠금을 걸지 않는다. 개발 중 설정을 잊어도 앱은 돌아간다.
-        with patch.dict(os.environ, {"APP_PASSWORD": ""}):
+    def test_guard_can_be_disabled(self):
+        # APP_AUTH=off 면 잠금을 걸지 않는다. 개발 중 설정을 잊어도 앱은 돌아간다.
+        with patch.dict(os.environ, {"APP_AUTH": "off"}):
             self.assertFalse(auth_guard.is_enabled())
             with patch.object(app_module, "get_health", return_value={}):
                 self.assertEqual(self.client.get("/api/platforms/health").status_code, 200)
+
+    def test_yesterday_password_is_accepted(self):
+        # 방송이 새벽까지 이어지므로 어제 인증번호도 하루 더 통과한다.
+        yesterday = auth_guard._date_str(auth_guard._now() - timedelta(days=1))
+        self._seed_password(self.YESTERDAY_PIN, date=yesterday)
+        self.assertEqual(self._login(self.YESTERDAY_PIN).status_code, 200)
+
+    def test_password_older_than_yesterday_is_rejected_and_pruned(self):
+        day_before = auth_guard._date_str(auth_guard._now() - timedelta(days=2))
+        self._seed_password("333333", date=day_before)
+
+        response = self._login("333333")
+        self.assertEqual(response.status_code, 401)
+        # 그제 인증번호는 갱신 과정에서 상태 파일에서도 지워진다
+        self.assertNotIn(day_before, self._passwords())
+
+    def test_rotation_generates_six_digit_password_and_prunes(self):
+        # 오늘 키가 없는 상태(자정 직후·상태 파일 초기화)에서 갱신이 일어난다.
+        yesterday = auth_guard._date_str(auth_guard._now() - timedelta(days=1))
+        self._seed_password(self.YESTERDAY_PIN, date=yesterday)
+
+        # 갱신 함수는 잠금 스위치를 보지 않으므로, 백그라운드 스레드가 끼어들지
+        # 않도록 APP_AUTH=off 에서 직접 부른다.
+        with patch.dict(os.environ, {"APP_AUTH": "off"}):
+            with auth_guard._locked_state() as state:
+                state["passwords"].pop(auth_guard._date_str(), None)
+            rotated, today_pin, yesterday_pin = auth_guard.ensure_today_password()
+
+        self.assertTrue(rotated)
+        self.assertEqual(len(today_pin), auth_guard.PIN_LENGTH)
+        self.assertTrue(today_pin.isdigit())
+        self.assertEqual(yesterday_pin, self.YESTERDAY_PIN)
+        # 오늘과 어제 두 개만 남는다
+        self.assertEqual(
+            sorted(self._passwords()),
+            sorted([auth_guard._date_str(), yesterday]),
+        )
+
+    def test_rotation_is_idempotent(self):
+        with patch.dict(os.environ, {"APP_AUTH": "off"}):
+            with auth_guard._locked_state() as state:
+                state["passwords"].pop(auth_guard._date_str(), None)
+            first = auth_guard.ensure_today_password()
+            second = auth_guard.ensure_today_password()
+
+        self.assertTrue(first[0])
+        self.assertFalse(second[0])
+        self.assertEqual(first[1], second[1])
+
+    def test_notify_sends_new_password_to_telegram(self):
+        with patch.dict(os.environ, {
+            auth_guard.TELEGRAM_TOKEN_ENV: "test-token",
+            auth_guard.TELEGRAM_CHAT_ENV: "12345",
+        }), patch.object(auth_guard.requests, "post") as post:
+            post.return_value = Mock(ok=True, status_code=200)
+            sent = auth_guard._notify_sync("2026-11-05", "111111", "222222")
+
+        self.assertTrue(sent)
+        post.assert_called_once()
+        self.assertIn("bottest-token/sendMessage", post.call_args.args[0])
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["chat_id"], "12345")
+        self.assertIn("오늘: 111111", payload["text"])
+        self.assertIn("어제: 222222", payload["text"])
+
+    def test_notify_failure_keeps_password_usable(self):
+        # 발송이 실패해도 갱신은 끝나고, 새 인증번호는 상태 파일에 남는다.
+        with patch.dict(os.environ, {
+            auth_guard.TELEGRAM_TOKEN_ENV: "test-token",
+            auth_guard.TELEGRAM_CHAT_ENV: "12345",
+        }), patch.object(auth_guard, "TELEGRAM_RETRY_DELAY_SECONDS", 0), \
+             patch.object(auth_guard.requests, "post",
+                          side_effect=auth_guard.requests.RequestException("boom")):
+            sent = auth_guard._notify_sync("2026-11-05", "111111", None)
+
+        self.assertFalse(sent)
+        self.assertEqual(self._passwords().get(auth_guard._date_str()), self.TODAY_PIN)
+
+    def test_notify_without_telegram_config_skips_api(self):
+        with patch.dict(os.environ, {
+            auth_guard.TELEGRAM_TOKEN_ENV: "",
+            auth_guard.TELEGRAM_CHAT_ENV: "",
+        }), patch.object(auth_guard.requests, "post") as post:
+            sent = auth_guard._notify_sync("2026-11-05", "111111", None)
+
+        self.assertFalse(sent)
+        post.assert_not_called()
 
 
 if __name__ == "__main__":

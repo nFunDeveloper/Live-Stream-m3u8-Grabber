@@ -32,14 +32,17 @@ logger = logging.getLogger(__name__)
 install_auth_guard(app)
 if not auth_guard.is_enabled():
     logger.warning(
-        "[auth] APP_PASSWORD 가 비어 있어 비밀번호 잠금이 꺼져 있다."
-        " 외부에 노출되는 곳이라면 반드시 설정할 것"
+        "[auth] APP_AUTH=off 로 비밀번호 잠금이 꺼져 있다."
+        " 외부에 노출되는 곳이라면 반드시 켤 것"
     )
-elif len(os.getenv("APP_PASSWORD", "").strip()) != auth_guard.PIN_LENGTH:
+elif os.getenv(auth_guard.PASSWORD_ENV, "").strip():
     logger.warning(
-        "[auth] APP_PASSWORD 가 %s자리가 아니다. 화면은 %s자리 입력칸이다",
-        len(os.getenv("APP_PASSWORD", "").strip()),
-        auth_guard.PIN_LENGTH,
+        "[auth] %s 는 더 이상 쓰지 않는다. 인증번호는 매일 00시에 자동 생성되고"
+        " %s / %s 으로 발송된다. .env 에서 %s 를 지워도 좋다",
+        auth_guard.PASSWORD_ENV,
+        auth_guard.TELEGRAM_TOKEN_ENV,
+        auth_guard.TELEGRAM_CHAT_ENV,
+        auth_guard.PASSWORD_ENV,
     )
 
 platforms = {

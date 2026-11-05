@@ -107,24 +107,36 @@ docker compose -f docker-compose.dev.yaml up --build
 
 ### 비밀번호 잠금
 
-앱을 열면 가운데 인증번호 4자리 입력창이 뜨고, 통과해야 본 화면이 열린다.
+앱을 열면 가운데 인증번호 6자리 입력창이 뜨고, 통과해야 본 화면이 열린다.
 승인된 관계자만 쓸 수 있어야 하는 앱이라 주소를 알면 아무나 방송을 추출할 수
 있어서 막는 것이다. 통과한 뒤에는 서명된 세션 쿠키로 기억되므로 새로고침해도
 다시 묻지 않는다(30일).
 
+인증번호는 고정이 아니다. **매일 00시(`APP_TZ`, 기본 `Asia/Seoul`)에 6자리
+랜덤 번호로 바뀌고**, 새 번호를 관리용 텔레그램으로 보내준다. 방송이 새벽까지
+이어지므로 **당일자와 전일자 두 인증번호를 모두 허용**한다(전일자 번호는 다음날
+00시까지만 유효). 자정에 이미 로그인해둔 세션은 끊기지 않는다.
+
 | 환경변수 | 기본값 | 설명 |
 |----------|--------|------|
-| `APP_PASSWORD` | `1322` | 화면을 여는 인증번호. 숫자 4자리여야 화면과 맞는다 |
+| `APP_AUTH` | `on` | 인증번호 잠금. `off` 로 끈다 (개발·테스트용) |
+| `APP_TZ` | `Asia/Seoul` | 인증번호 갱신 기준 시각. 00시가 이 시간대 기준이다 |
+| `TELEGRAM_BOT_TOKEN` | (비어 있음) | 매일 갱신된 인증번호를 보내줄 텔레그램 봇 토큰 |
+| `TELEGRAM_CHAT_ID` | (비어 있음) | 인증번호를 받을 채팅·채널 ID |
 | `APP_SECRET_KEY` | 고정 기본값 | 세션 쿠키 서명 키. 바꾸면 전원이 다시 인증번호를 쳐야 한다 |
-| `APP_STATE_FILE` | `/state/auth.json` | 잠금 횟수·nonce가 저장되는 파일 (운영은 볼륨에 둔다) |
+| `APP_STATE_FILE` | `/state/auth.json` | 잠금 횟수·nonce·날짜별 인증번호가 저장되는 파일 (운영은 볼륨에 둔다) |
 
 ```bash
-APP_PASSWORD='1234' docker compose -f docker-compose.dev.yaml up -d --build backend
+TELEGRAM_BOT_TOKEN='***' TELEGRAM_CHAT_ID='***' \
+  docker compose -f docker-compose.dev.yaml up -d --build backend
 ```
 
-- 입력창은 4칸이므로 `APP_PASSWORD` 가 4자리가 아니면 시작 로그에 경고로 남는다.
+- 인증번호는 상태 파일(`APP_STATE_FILE`)의 날짜별 키로 보관된다. 오늘·어제 두
+  항목만 남고 오래된 것은 갱신 때 자동으로 지워진다.
+- 텔레그램을 설정하지 않았거나 발송에 실패해도 갱신은 멈추지 않는다. 새 인증번호는
+  백엔드 로그(`docker compose logs backend`)에 남으니 그곳에서 확인한다.
 - 입력 칸은 `type="password"` 로 마스킹된다. 화면에 어깨너머로 보이는 일도,
-  브라우저가 폼 값을 되짚어 보여주는 일도 없다. 숫자 키패드는 `inputMode="numeric"`
+  브라우저가 폼 값을 되돌려 보여주는 일도 없다. 숫자 키패드는 `inputMode="numeric"`
   으로 그대로 유지된다.
 
 #### 인증번호는 평문으로 오가지 않는다
@@ -176,7 +188,9 @@ POST /api/auth/login      →  {"nonce":"9f2c...","proof":"3a71..."}   // sha256
 
 #### 그 외
 
-- `APP_PASSWORD`를 비우면 잠금이 꺼지고 로그에 경고가 남는다. 테스트도 이 상태를 쓴다.
+- `APP_AUTH=off` 로 잠금을 끌 수 있다. 테스트도 이 상태를 쓴다. 반대로 외부에
+  노출되는 곳에서는 반드시 켜둘 것.
+- `APP_PASSWORD` 는 더 이상 쓰지 않는다. 남아 있으면 시작 시 폐기 경고가 남는다.
 - 잠금 여부는 프론트가 아니라 백엔드가 강제한다. 잠그지 않은 상태로 `/api/grab`을
   직접 불러도 401이 돌아온다.
 
@@ -225,18 +239,21 @@ sudo docker compose up -d --build
 
 #### `.env` (서버에 한 번만 만들어 둔다)
 
-`rsync` 는 `.env` 를 건너뛰므로 서버에 직접 만들어 둔다. 지우면 인증번호가
-기본값 `1322` 로, 서명 키는 everyone-knows 값으로 돌아간다.
+`rsync` 는 `.env` 를 건너뛰므로 서버에 직접 만들어 둔다. 지우면 서명 키가
+everyone-knows 값으로 돌아가고 텔레그램 발송이 끊긴다(인증번호는 로그로만
+확인된다).
 
 ```bash
 cd workspace/Live-Stream_m3u8_Grabber
 umask 077
-printf 'APP_PASSWORD=1322\nAPP_SECRET_KEY=%s\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > .env
+printf 'APP_SECRET_KEY=%s\nTELEGRAM_BOT_TOKEN=*** TELEGRAM_CHAT_ID=*** "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > .env
 ```
 
+- `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` 를 채워야 매일 인증번호를
+  텔레그램으로 받는다. 비어 있으면 갱신은 그대로 되고 로그에만 남는다.
 - `APP_SECRET_KEY` 를 바꾸면 접속해 있던 모두가 다시 인증번호를 쳐야 한다.
-- 실패 횟수·nonce 는 `auth-state` 볼륨의 `/state/auth.json` 에 남는다.
-  컨테이너 안 `/tmp` 에 두면 재시작할 때 잠금 기록이 사라진다.
+- 실패 횟수·nonce·날짜별 인증번호는 `auth-state` 볼륨의 `/state/auth.json` 에
+  남는다. 컨테이너 안 `/tmp` 에 두면 재시작할 때 잠금 기록이 사라진다.
 
 #### 되돌리기
 

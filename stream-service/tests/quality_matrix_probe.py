@@ -3,9 +3,9 @@
 
 개발 서버가 돌아가는 상태에서 실행한다:
 
-    python3 tests/quality_matrix_probe.py                # 전체 플랫폼
-    python3 tests/quality_matrix_probe.py --platform chzzk
-    python3 tests/quality_matrix_probe.py --pin 4321    # PIN 바뀌었을 때
+    python3 tests/quality_matrix_probe.py --pin 123456               # 전체 플랫폼
+    python3 tests/quality_matrix_probe.py --pin 123456 --platform chzzk
+    # 인증번호(--pin)는 매일 00시에 바뀐다. 백엔드 로그나 관리용 텔레그램에서 확인
 
 외부 의존성이 없다(requests/flask 아님). 인증 로그인, 검색으로 라이브 채널 찾기,
 화질별 grab, 받은 플레이리스트가 실제로 열리는지까지 한 번에 본다.
@@ -163,7 +163,8 @@ def run(base, pin, only):
 def main():
     parser = argparse.ArgumentParser(description="플랫폼별 화질 매트릭스 테스트")
     parser.add_argument("--base", default="http://127.0.0.1:10000")
-    parser.add_argument("--pin", default="1322")
+    parser.add_argument("--pin", required=True,
+                        help="현재 인증번호 (백엔드 로그 또는 관리용 텔레그램에서 확인)")
     parser.add_argument("--platform", default=None, help="한 플랫폼만 (chzzk/cime/...)")
     args = parser.parse_args()
 

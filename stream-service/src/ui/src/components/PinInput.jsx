@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
 
-export const PIN_LENGTH = 4;
+export const PIN_LENGTH = 6;
 
 // 숫자를 넣은 칸만 짧게 튀어오르게 한다. 매번 클래스를 다시 붙일 필요 없이
 // Web Animations API 를 쓰면 재실행도 자연스럽다.
@@ -25,7 +25,7 @@ function popBox(el) {
   );
 }
 
-// 숫자 4자리를 한 칸씩 나누어 받는 일반적인 인증폼.
+// 숫자 인증번호를 한 칸씩 나누어 받는 일반적인 인증폼.
 // 한 칸에 숫자를 넣으면 자동으로 다음 칸으로 넘어가고, 지우면 앞 칸으로 돌아간다.
 export default function PinInput({ boxes, onBoxesChange, disabled, onComplete, opened = false }) {
   const refs = useRef([]);
@@ -36,7 +36,7 @@ export default function PinInput({ boxes, onBoxesChange, disabled, onComplete, o
     if (!disabled) refs.current[0]?.focus();
   }, [disabled]);
 
-  // 네 칸이 모두 차면 서버로 보낸다. 한 번만 건다.
+  // 모든 칸이 차면 서버로 보낸다. 한 번만 건다.
   const isComplete = boxes.every((box) => box !== '');
   useEffect(() => {
     if (isComplete && !filledRef.current) {
@@ -112,7 +112,8 @@ export default function PinInput({ boxes, onBoxesChange, disabled, onComplete, o
 
   return (
     <div className="relative">
-      <div className="flex items-center justify-center gap-2 sm:gap-3">
+      {/* 6칸이 360px 휴대폰과 데스크톱 카드 안에 넘치지 않도록 간격을 좁게 잡는다 */}
+      <div className="flex items-center justify-center gap-1.5 sm:gap-2">
         {boxes.map((box, index) => (
           <input
             key={index}
@@ -133,7 +134,7 @@ export default function PinInput({ boxes, onBoxesChange, disabled, onComplete, o
             autoComplete={index === 0 ? 'one-time-code' : 'off'}
             maxLength={PIN_LENGTH}
             aria-label={`${PIN_LENGTH}자리 인증번호 ${index + 1}번째 자리`}
-            className={`pin-box-in w-12 h-14 sm:w-14 sm:h-16 text-center text-xl sm:text-2xl font-semibold
+            className={`pin-box-in w-10 h-14 sm:w-12 sm:h-16 text-center text-lg sm:text-xl font-semibold
               bg-white/[0.03] border rounded-lg outline-none tabular-nums
               transition-[border-color,background-color,color,box-shadow] duration-200
               focus:border-white/40 focus:bg-white/[0.06] focus:shadow-[0_0_15px_rgba(255,255,255,0.07)]

@@ -224,7 +224,7 @@ export default function PasswordGate({ children }) {
               e.preventDefault();
               if (boxes.every((box) => box !== '')) onComplete(boxes.join(''));
             }}
-            className="gate-card relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-8 shadow-2xl shadow-black/50"
+            className="gate-card relative z-10 w-full max-w-sm sm:max-w-md rounded-2xl border border-white/10 bg-[#0A0A0C]/80 backdrop-blur-xl p-6 sm:p-8 shadow-2xl shadow-black/50"
           >
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center">
@@ -261,7 +261,7 @@ export default function PasswordGate({ children }) {
           isLoading={busy}
           isDisabled={!boxes.every((box) => box !== '')}
           onPress={() => {
-            // 네 칸이 차면 이미 자동 전송되지만, Enter 를 누른 경우에도 같게 처리한다.
+            // 모든 칸이 차면 이미 자동 전송되지만, Enter 를 누른 경우에도 같게 처리한다.
             if (boxes.every((box) => box !== '')) onComplete(boxes.join(''));
           }}
           className="w-full h-10 rounded-lg bg-white hover:bg-zinc-200 text-black font-semibold text-sm shadow-lg shadow-white/10 transition-all mt-5"
