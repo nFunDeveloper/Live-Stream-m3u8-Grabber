@@ -23,11 +23,12 @@ services:
       context: ./stream-service
       dockerfile: Dockerfile.backend
     environment:
-      # 인증번호 잠금. 끄려면 APP_AUTH=off
-      - APP_AUTH=${APP_AUTH:-on}
+      # 인증번호 잠금. 로컬 개발은 기본으로 꺼져 있다(비밀번호 없이 바로 입장).
+      # 개발에서 잠금을 시험하려면 APP_AUTH=on 으로 켠다.
+      - APP_AUTH=${APP_AUTH:-off}
       # 인증번호 갱신 기준 시각. 자정(00시)이 이 시간대로 바뀐다.
       - APP_TZ=${APP_TZ:-Asia/Seoul}
-      # 매일 갱신된 인증번호를 보내줄 관리용 텔레그램 봇. 없으면 로그로만 확인한다.
+      # 관리용 텔레그램 봇. 로컬 .env 에서 지우면 발송하지 않는다(로그로만 확인).
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       # 세션 쿠키 서명 키. 이 값이 바뀌면 모두 다시 비밀번호를 쳐야 한다.

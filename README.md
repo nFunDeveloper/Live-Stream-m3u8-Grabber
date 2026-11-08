@@ -119,7 +119,7 @@ docker compose -f docker-compose.dev.yaml up --build
 
 | 환경변수 | 기본값 | 설명 |
 |----------|--------|------|
-| `APP_AUTH` | `on` | 인증번호 잠금. `off` 로 끈다 (개발·테스트용) |
+| `APP_AUTH` | `on` | 인증번호 잠금. `off` 로 끈다 (개발·테스트용). `docker-compose.dev.yaml` 은 기본이 `off` — 로컬 개발은 비밀번호 없이 바로 입장 |
 | `APP_TZ` | `Asia/Seoul` | 인증번호 갱신 기준 시각. 00시가 이 시간대 기준이다 |
 | `TELEGRAM_BOT_TOKEN` | (비어 있음) | 매일 갱신된 인증번호를 보내줄 텔레그램 봇 토큰 |
 | `TELEGRAM_CHAT_ID` | (비어 있음) | 인증번호를 받을 채팅·채널 ID |
