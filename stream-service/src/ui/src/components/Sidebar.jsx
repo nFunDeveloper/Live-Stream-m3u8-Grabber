@@ -153,7 +153,8 @@ function HistoryItem({ entry, onPick, onDelete, onCopyM3u8, statuses }) {
       </div>
       <div className="hidden group-hover/item:flex items-center gap-0.5 shrink-0">
         <CopyM3u8Button onClick={() => onCopyM3u8(entry)} />
-        <IconButton danger title="히스토리에서 삭제" onClick={() => onDelete(entry.key)}>
+        {/* 행 전체의 onPick(채널 재로드·재기록)으로 이벤트가 새지 않도록 막는다 */}
+        <IconButton danger title="히스토리에서 삭제" onClick={(e) => { e.stopPropagation(); onDelete(entry.key); }}>
           <X className="w-3 h-3" />
         </IconButton>
       </div>
@@ -402,7 +403,8 @@ title={
                 </div>
                 <div className="hidden group-hover/m:flex items-center gap-0.5 shrink-0">
                   <CopyM3u8Button onClick={() => onCopyM3u8(member)} />
-                  <IconButton danger title="그룹에서 제거" onClick={() => onDeleteMember(group, member)}>
+                  {/* 행의 onPick 으로 이벤트가 새면 제거하면서 채널이 다시 기록된다 */}
+                  <IconButton danger title="그룹에서 제거" onClick={(e) => { e.stopPropagation(); onDeleteMember(group, member); }}>
                     <X className="w-3 h-3" />
                   </IconButton>
                 </div>
