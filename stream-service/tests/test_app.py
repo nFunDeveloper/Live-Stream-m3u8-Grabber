@@ -642,11 +642,12 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         base = datetime(2026, 11, 8, hour, minute, tzinfo=self.TZ)
         return base + timedelta(days=day_offset)
 
-    def _save(self, date, results, retried_at):
+    def _save(self, date, results, retried_at, **extra):
         platform_health._save_state({
             "date": date,
             "retried_at": retried_at,
             "results": results,
+            **extra,
         })
 
     @staticmethod
@@ -739,6 +740,7 @@ class PlatformHealthScheduleTests(unittest.TestCase):
                 patch.object(platform_health, "_probe_names",
                              side_effect=self._probe_ok), \
                 patch.object(platform_health, "_send_telegram") as send:
+            send.return_value = 42
             platform_health.get_health(self.platforms)
 
         send.assert_called_once()
@@ -747,6 +749,10 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         self.assertIn("치지직", text)  # chzzk 의 화면 이름
         self.assertIn("SOOP", text)
         self.assertIn("2/2", text)
+        # 나중에 수정할 수 있도록 message_id 와 원본 시각을 남긴다
+        state = platform_health._load_state()
+        self.assertEqual(state["daily_message_id"], 42)
+        self.assertEqual(state["daily_checked_at"], now.timestamp())
 
     def test_force_check_does_not_send_telegram(self):
         now = self._at(10)
@@ -759,37 +765,51 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         # force=1 은 운영자가 직접 거는 확인이라 자동 발송하지 않는다
         send.assert_not_called()
 
-    def test_recovery_of_failed_platform_sends_alert(self):
+    def test_recovery_edits_original_message_instead_of_new_send(self):
         now = self._at(9)
-        self._save(self.TODAY, {"soop": {"ok": False, "reason": "지금 방송 중인 방송이 없습니다"}},
-                   self._at(7).timestamp())
+        self._save(self.TODAY, {
+            "chzzk": {"ok": True, "reason": ""},
+            "soop": {"ok": False, "reason": "지금 방송 중인 방송이 없습니다"},
+        }, self._at(7).timestamp(),
+            daily_message_id=77,
+            daily_checked_at=self._at(6, minute=1).timestamp())
 
         with patch.object(platform_health, "_now", return_value=now), \
                 patch.object(platform_health, "_probe_names",
                              side_effect=self._probe_ok), \
-                patch.object(platform_health, "_send_telegram") as send:
+                patch.object(platform_health, "_send_telegram") as send, \
+                patch.object(platform_health,
+                             "_edit_telegram_message") as edit:
             platform_health.get_health(self.platforms)
 
-        send.assert_called_once()
-        text = send.call_args.args[0]
-        self.assertIn("복구", text)
-        self.assertIn("SOOP", text)
+        # 새 메시지를 만들지 않고 원래 메시지(77번)를 고친다
+        send.assert_not_called()
+        edit.assert_called_once()
+        self.assertEqual(edit.call_args.args[0], 77)
+        text = edit.call_args.args[1]
+        self.assertIn("✅ SOOP", text)          # 복구가 반영된 결과
+        self.assertIn("06:01", text)            # 원본 점검 시각은 그대로
+        self.assertIn("09:00 수정", text)       # 수정 시각이 덧붙는다
+        self.assertTrue(platform_health._load_state()["results"]["soop"]["ok"])
 
     def test_still_failing_retry_sends_nothing(self):
         now = self._at(9)
         self._save(self.TODAY, {"soop": {"ok": False, "reason": "x"}},
-                   self._at(7).timestamp())
+                   self._at(7).timestamp(), daily_message_id=77)
 
         def fail(names, platforms):
             return {name: {"ok": False, "reason": "x"} for name in names}
 
         with patch.object(platform_health, "_now", return_value=now), \
                 patch.object(platform_health, "_probe_names", side_effect=fail), \
-                patch.object(platform_health, "_send_telegram") as send:
+                patch.object(platform_health, "_send_telegram") as send, \
+                patch.object(platform_health,
+                             "_edit_telegram_message") as edit:
             platform_health.get_health(self.platforms)
 
-        # 여전히 실패라면 복구 알림도 없다
+        # 계속 실패하면 발송도 수정도 없다
         send.assert_not_called()
+        edit.assert_not_called()
 
     def test_telegram_sender_skips_when_not_configured(self):
         with patch.dict(os.environ, {
@@ -798,23 +818,57 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         }), patch.object(platform_health.requests, "post") as post:
             sent = platform_health._send_telegram("hi")
 
-        self.assertFalse(sent)
+        self.assertIsNone(sent)
         post.assert_not_called()
 
-    def test_telegram_sender_posts_html(self):
+    def test_telegram_sender_returns_message_id(self):
+        with patch.dict(os.environ, {
+            platform_health.TELEGRAM_TOKEN_ENV: "tok",
+            platform_health.TELEGRAM_CHAT_ENV: "1",
+        }), patch.object(platform_health, "TELEGRAM_RETRY_DELAY_SECONDS", 0), \
+                patch.object(platform_health.requests, "post") as post:
+            post.return_value = Mock(
+                ok=True, status_code=200,
+                json=Mock(return_value={"result": {"message_id": 42}}),
+            )
+            sent = platform_health._send_telegram("<b>hi</b>")
+
+        self.assertEqual(sent, 42)
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["chat_id"], "1")
+        self.assertEqual(payload["parse_mode"], "HTML")
+        self.assertEqual(payload["text"], "<b>hi</b>")
+
+    def test_edit_message_updates_in_place(self):
         with patch.dict(os.environ, {
             platform_health.TELEGRAM_TOKEN_ENV: "tok",
             platform_health.TELEGRAM_CHAT_ENV: "1",
         }), patch.object(platform_health, "TELEGRAM_RETRY_DELAY_SECONDS", 0), \
                 patch.object(platform_health.requests, "post") as post:
             post.return_value = Mock(ok=True, status_code=200)
-            sent = platform_health._send_telegram("<b>hi</b>")
+            edited = platform_health._edit_telegram_message(42, "<b>new</b>")
 
-        self.assertTrue(sent)
+        self.assertTrue(edited)
+        url = post.call_args.args[0]
+        self.assertIn("editMessageText", url)
         payload = post.call_args.kwargs["json"]
-        self.assertEqual(payload["chat_id"], "1")
-        self.assertEqual(payload["parse_mode"], "HTML")
-        self.assertEqual(payload["text"], "<b>hi</b>")
+        self.assertEqual(payload["message_id"], 42)
+        self.assertEqual(payload["text"], "<b>new</b>")
+
+    def test_edit_treats_unchanged_content_as_success(self):
+        # 두 워커가 같은 수정을 겹쳐 하면 텔레그램이 "message is not modified"로 거절한다
+        with patch.dict(os.environ, {
+            platform_health.TELEGRAM_TOKEN_ENV: "tok",
+            platform_health.TELEGRAM_CHAT_ENV: "1",
+        }), patch.object(platform_health, "TELEGRAM_RETRY_DELAY_SECONDS", 0), \
+                patch.object(platform_health.requests, "post") as post:
+            post.return_value = Mock(
+                ok=False, status_code=400,
+                text='{"ok":false,"description":"Bad Request: message is not modified"}',
+            )
+            edited = platform_health._edit_telegram_message(42, "<b>same</b>")
+
+        self.assertTrue(edited)
 
     def test_daily_commit_claims_send_only_once(self):
         # 워커가 동시에 점검을 끝내도 발송 클레임은 한 번만 성공한다
@@ -827,34 +881,6 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         state = platform_health._load_state()
         self.assertEqual(state["daily_notified"], "2026-11-08")
         self.assertTrue(state["results"]["chzzk"]["ok"])
-
-    def test_recovery_alert_is_claimed_once(self):
-        now = self._at(9)
-        self._save(self.TODAY, {
-            "chzzk": {"ok": True, "reason": ""},
-            "soop": {"ok": False, "reason": "x"},
-        }, self._at(7).timestamp())
-
-        with patch.object(platform_health, "_now", return_value=now), \
-                patch.object(platform_health, "_probe_names",
-                             side_effect=self._probe_ok), \
-                patch.object(platform_health, "_send_telegram") as send:
-            platform_health.get_health(self.platforms)
-        self.assertEqual(send.call_count, 1)
-
-        # 같은 날 같은 조합의 복구가 다시 판정돼도(워커 중복 등) 알림은 한 번이다
-        def rewind(state):
-            state["results"]["soop"] = {"ok": False, "reason": "x"}
-            state["retried_at"] = self._at(7).timestamp()
-
-        platform_health._update_state(rewind)
-        with patch.object(platform_health, "_now", return_value=now), \
-                patch.object(platform_health, "_probe_names",
-                             side_effect=self._probe_ok), \
-                patch.object(platform_health, "_send_telegram") as send_again:
-            platform_health.get_health(self.platforms)
-
-        send_again.assert_not_called()
 
 
 class AuthGuardTests(unittest.TestCase):

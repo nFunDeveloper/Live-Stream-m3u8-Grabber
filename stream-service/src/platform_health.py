@@ -7,8 +7,9 @@
 확인은 매일 06시(APP_TZ, 기본 Asia/Seoul)에 한 번만 돌리고 그 결과를 파일에
 보관한다. 새벽에는 라이브 방송이 적어 실패로 돌아올 수 있으므로, 실패한 플랫폼은
 성공할 때까지 1시간마다 그 플랫폼만 다시 확인한다. 자정부터 06시 전까지는
-전일 결과를 그대로 보여준다. 전체 점검 결과는 관리용 텔레그램으로도 보내고,
-실패가 재시도로 복구되면 그 소식도 따로 알려준다.
+전일 결과를 그대로 보여준다. 전체 점검 결과는 관리용 텔레그램으로 하루 한 통만
+보내고, 실패가 재시도로 복구되면 새 메시지를 만들지 않고 원래 메시지를 수정해
+반영한다(수정 시각 포함). 재시도가 계속 실패하면 아무것도 보내지 않는다.
 """
 
 import fcntl
@@ -263,12 +264,16 @@ def get_health(platforms, force=False):
     )
     ordered = _ordered(results, names)
     if force:
-        # force=1 은 운영자가 직접 거는 확인 — 자동 발송도 클레임도 하지 않는다
-        _save_state({
-            "date": _date_str(now.date()),
-            "retried_at": now.timestamp(),
-            "results": results,
-        })
+        # force=1 은 운영자가 직접 거는 확인 — 자동 발송도 하지 않는다.
+        # 기존 발송 기록(daily_notified·message_id)은 남겨서 원본 메시지를 고칠 수 있게 한다.
+        def mutate(state):
+            state.update(
+                date=_date_str(now.date()),
+                retried_at=now.timestamp(),
+                results=results,
+            )
+
+        _update_state(mutate)
         return ordered
     # 워커가 동시에 점검하더라도 발송 클레임을 건 쪽만 메시지를 보낸다
     if _commit_daily(now, results):
@@ -296,30 +301,26 @@ def _commit_daily(now, results):
 
 
 def _retry_failed(state, names, platforms, now):
-    """실패한 플랫폼만 다시 점검해 저장된 결과와 합친다."""
+    """실패한 플랫폼만 다시 점검해 저장된 결과와 합친다.
+
+    계속 실패하면 아무것도 보내지 않고, 성공이 생겼을 때만 원래 메시지를 고친다.
+    """
     failed = [name for name in names if not state["results"].get(name, {}).get("ok")]
     if not failed:
         return _ordered(state["results"], names)
     logger.info("[health] 실패 플랫폼 재시도 %s", failed)
     retried = _probe_names(failed, platforms)
     recovered = [name for name in failed if retried.get(name, {}).get("ok")]
+    merged = dict(state["results"])
+    merged.update(retried)
 
     def mutate(latest):
         latest.setdefault("results", {}).update(retried)
         latest["retried_at"] = now.timestamp()
-        if not recovered:
-            return False
-        # 같은 날 같은 조합의복구 알림은 한 번만 — 워커 중복 실행을막는다
-        claim = f"{latest.get('date', '')}|{','.join(sorted(recovered))}"
-        if latest.get("recovery_claim") == claim:
-            return False
-        latest["recovery_claim"] = claim
-        return True
 
-    if _update_state(mutate):
-        _notify_safely(_notify_recovery, now, recovered)
-    merged = dict(state["results"])
-    merged.update(retried)
+    _update_state(mutate)
+    if recovered:
+        _notify_safely(_notify_recovery_edit, now, merged)
     return _ordered(merged, names)
 
 
@@ -332,8 +333,11 @@ def _format_heading(when):
     return f"{date_part} {when.strftime('%H:%M')}"
 
 
-def _build_daily_message(when, results):
-    """06시 전체 점검 결과 안내. auth_guard 의 인증번호 메시지와 같은 HTML 서식이다."""
+def _build_daily_message(when, results, edited_at=None):
+    """06시 전체 점검 결과 안내. auth_guard 의 인증번호 메시지와 같은 HTML 서식이다.
+
+    `edited_at` 을 주면 끝에 수정 시각을 덧붙인다 — 복구 후 원래 메시지를 고쳐쓸 때 쓴다.
+    """
     lines = [
         "📋 <b>M3U8 Grabber 플랫폼 점검</b>",
         f"📅 {_format_heading(when)}",
@@ -350,33 +354,35 @@ def _build_daily_message(when, results):
     lines.append(f"<b>{ok_count}/{len(results)}</b> 플랫폼 사용 가능")
     if ok_count < len(results):
         lines.append("<i>실패한 플랫폼은 1시간마다 재시도합니다</i>")
+    if edited_at is not None:
+        lines.append(f"<i>✏️ {edited_at.strftime('%H:%M')} 수정</i>")
     return "\n".join(lines)
 
 
-def _build_recovery_message(when, recovered):
-    lines = [
-        "🔄 <b>M3U8 Grabber 플랫폼 복구</b>",
-        f"📅 {_format_heading(when)}",
-        "",
-    ]
-    lines += [f"✅ {_label(name)} — 다시 사용할 수 있습니다" for name in recovered]
-    return "\n".join(lines)
+def _telegram_credentials():
+    token = os.getenv(TELEGRAM_TOKEN_ENV, "").strip()
+    chat_id = os.getenv(TELEGRAM_CHAT_ENV, "").strip()
+    return (token, chat_id) if token and chat_id else (None, None)
 
 
 def _send_telegram(text):
-    """설정돼 있으면 텔레그램으로 보내고, 아니거나 실패하면 False."""
-    token = os.getenv(TELEGRAM_TOKEN_ENV, "").strip()
-    chat_id = os.getenv(TELEGRAM_CHAT_ENV, "").strip()
-    if not token or not chat_id:
-        return False
+    """설정돼 있으면 텔레그램으로 보내고 message_id 를 돌려준다. 실패하면 None."""
+    token, chat_id = _telegram_credentials()
+    if not token:
+        return None
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     for attempt in range(1, TELEGRAM_RETRIES + 1):
         try:
             response = requests.post(url, json=payload, timeout=TELEGRAM_TIMEOUT_SECONDS)
             if response.ok:
-                logger.info("[health] 텔레그램 발송 완료")
-                return True
+                try:
+                    message_id = response.json()["result"]["message_id"]
+                except (ValueError, KeyError, TypeError):
+                    logger.warning("[health] 텔레그램 응답에서 message_id 를 못읽었다")
+                    return None
+                logger.info("[health] 텔레그램 발송 완료 message_id=%s", message_id)
+                return message_id
             logger.warning(
                 "[health] 텔레그램 응답 %s attempt=%s body=%s",
                 response.status_code, attempt, response.text[:200],
@@ -385,11 +391,48 @@ def _send_telegram(text):
             logger.warning("[health] 텔레그램 발송 실패 attempt=%s err=%s", attempt, exc)
         if attempt < TELEGRAM_RETRIES:
             time.sleep(TELEGRAM_RETRY_DELAY_SECONDS)
+    return None
+
+
+def _edit_telegram_message(message_id, text):
+    """보낸 점검 메시지의 내용을 고친다. 새 메시지를 만들지 않는 유일한 경로다."""
+    token, chat_id = _telegram_credentials()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/editMessageText"
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    for attempt in range(1, TELEGRAM_RETRIES + 1):
+        try:
+            response = requests.post(url, json=payload, timeout=TELEGRAM_TIMEOUT_SECONDS)
+            if response.ok:
+                return True
+            # 내용이 완전히 같으면 텔레그램이 거절한다 — 이미 반영된 것이니 성공으로 쳐야 한다
+            if "message is not modified" in response.text:
+                return True
+            logger.warning(
+                "[health] 메시지 수정 응답 %s attempt=%s body=%s",
+                response.status_code, attempt, response.text[:200],
+            )
+        except requests.RequestException as exc:
+            logger.warning("[health] 메시지 수정 실패 attempt=%s err=%s", attempt, exc)
+        if attempt < TELEGRAM_RETRIES:
+            time.sleep(TELEGRAM_RETRY_DELAY_SECONDS)
     return False
 
 
 def _notify_daily(when, results):
-    if _send_telegram(_build_daily_message(when, results)):
+    message_id = _send_telegram(_build_daily_message(when, results))
+    if message_id:
+        # 나중에 복구가 일어나면 이 메시지를 고쳐써야 하므로 id 와 원본 시각을 남긴다
+        _update_state(lambda state: state.update(
+            daily_message_id=message_id,
+            daily_checked_at=when.timestamp(),
+        ))
         return
     summary = ", ".join(
         f"{_label(name)}={'정상' if state.get('ok') else state.get('reason')}"
@@ -398,10 +441,22 @@ def _notify_daily(when, results):
     logger.warning("[health] 텔레그램 미발송 — 점검 결과: %s", summary)
 
 
-def _notify_recovery(when, recovered):
-    if _send_telegram(_build_recovery_message(when, recovered)):
+def _notify_recovery_edit(when, results):
+    """복구된 결과를 원래 점검 메시지에 반영한다. 채팅창에는 새 메시지가 생기지 않는다."""
+    state = _load_state() or {}
+    message_id = state.get("daily_message_id")
+    if not message_id:
+        # 원본이 없으면(그날 발송이 실패하는 등) 결과가 사라지지 않도록 새 메시지로 남긴다
+        if not _send_telegram(_build_daily_message(when, results)):
+            logger.warning("[health] 텔레그램 미발송 — 복구 결과 반영 실패")
         return
-    logger.warning("[health] 텔레그램 미발송 — 복구 알림: %s", recovered)
+    checked_at = state.get("daily_checked_at") or when.timestamp()
+    original = datetime.fromtimestamp(checked_at, tz=when.tzinfo)
+    text = _build_daily_message(original, results, edited_at=when)
+    if _edit_telegram_message(message_id, text):
+        logger.info("[health] 점검 메시지 수정 완료 message_id=%s", message_id)
+    else:
+        logger.warning("[health] 점검 메시지 수정 실패 message_id=%s", message_id)
 
 
 def _notify_safely(notify, *args):
