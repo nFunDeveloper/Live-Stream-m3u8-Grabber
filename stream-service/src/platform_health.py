@@ -168,6 +168,33 @@ def _save_state(state):
             os.close(fd)
 
 
+def _update_state(mutate):
+    """상태 파일을 락 안에서 읽고 mutate 로 수정·저장한 뒤 그 반환값을 돌려준다.
+
+    발송 클레임처럼 "읽고-정하고-쓰기"를 원자적으로 해야 하는 작업에 쓴다.
+    """
+    path = _state_path()
+    with _state_lock:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            raw = os.read(fd, 1 << 20)
+            try:
+                state = json.loads(raw) if raw else {}
+            except ValueError:
+                state = {}
+            outcome = mutate(state)
+            payload = json.dumps(state, ensure_ascii=False).encode("utf-8")
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, payload)
+            os.fsync(fd)
+            return outcome
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
 def _is_fresh(state, now):
     """저장된 결과를 지금 보여줘도 되는지.
 
@@ -230,20 +257,42 @@ def get_health(platforms, force=False):
         return _ordered(state["results"], names)
 
     results = _probe_names(names, platforms)
-    _save_state({
-        "date": _date_str(now.date()),
-        "retried_at": now.timestamp(),
-        "results": results,
-    })
     logger.info(
         "[health] 전체 점검 완료 date=%s ok=%s",
         _date_str(now.date()), [n for n, r in results.items() if r.get("ok")],
     )
     ordered = _ordered(results, names)
-    # force=1 은 운영자가 직접 거는 확인이라 결과를 보지 않아도 되므로 발송하지 않는다
-    if not force:
+    if force:
+        # force=1 은 운영자가 직접 거는 확인 — 자동 발송도 클레임도 하지 않는다
+        _save_state({
+            "date": _date_str(now.date()),
+            "retried_at": now.timestamp(),
+            "results": results,
+        })
+        return ordered
+    # 워커가 동시에 점검하더라도 발송 클레임을 건 쪽만 메시지를 보낸다
+    if _commit_daily(now, results):
         _notify_safely(_notify_daily, now, ordered)
     return ordered
+
+
+def _commit_daily(now, results):
+    """오늘 점검 결과를 저장하고 발송 클레임을 건다.
+
+    파일 락 안에서 발송 권한을 한 번만 주므로, 워커 둘이 같은 점검을
+    끝냈어도 텔레그램 메시지는 한 통만 나간다. 이미 클레임됐으면 False.
+    """
+    date = _date_str(now.date())
+
+    def mutate(state):
+        already_claimed = state.get("daily_notified") == date
+        state["date"] = date
+        state["retried_at"] = now.timestamp()
+        state["results"] = results
+        state["daily_notified"] = date
+        return not already_claimed
+
+    return _update_state(mutate)
 
 
 def _retry_failed(state, names, platforms, now):
@@ -253,16 +302,24 @@ def _retry_failed(state, names, platforms, now):
         return _ordered(state["results"], names)
     logger.info("[health] 실패 플랫폼 재시도 %s", failed)
     retried = _probe_names(failed, platforms)
+    recovered = [name for name in failed if retried.get(name, {}).get("ok")]
+
+    def mutate(latest):
+        latest.setdefault("results", {}).update(retried)
+        latest["retried_at"] = now.timestamp()
+        if not recovered:
+            return False
+        # 같은 날 같은 조합의복구 알림은 한 번만 — 워커 중복 실행을막는다
+        claim = f"{latest.get('date', '')}|{','.join(sorted(recovered))}"
+        if latest.get("recovery_claim") == claim:
+            return False
+        latest["recovery_claim"] = claim
+        return True
+
+    if _update_state(mutate):
+        _notify_safely(_notify_recovery, now, recovered)
     merged = dict(state["results"])
     merged.update(retried)
-    _save_state({
-        "date": state["date"],
-        "retried_at": now.timestamp(),
-        "results": merged,
-    })
-    recovered = [name for name in failed if retried.get(name, {}).get("ok")]
-    if recovered:
-        _notify_safely(_notify_recovery, now, recovered)
     return _ordered(merged, names)
 
 

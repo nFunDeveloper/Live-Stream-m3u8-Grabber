@@ -816,6 +816,46 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         self.assertEqual(payload["parse_mode"], "HTML")
         self.assertEqual(payload["text"], "<b>hi</b>")
 
+    def test_daily_commit_claims_send_only_once(self):
+        # 워커가 동시에 점검을 끝내도 발송 클레임은 한 번만 성공한다
+        now = self._at(6, minute=30)
+        results = {"chzzk": {"ok": True, "reason": ""}}
+
+        self.assertTrue(platform_health._commit_daily(now, results))
+        self.assertFalse(platform_health._commit_daily(now, results))
+
+        state = platform_health._load_state()
+        self.assertEqual(state["daily_notified"], "2026-11-08")
+        self.assertTrue(state["results"]["chzzk"]["ok"])
+
+    def test_recovery_alert_is_claimed_once(self):
+        now = self._at(9)
+        self._save(self.TODAY, {
+            "chzzk": {"ok": True, "reason": ""},
+            "soop": {"ok": False, "reason": "x"},
+        }, self._at(7).timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok), \
+                patch.object(platform_health, "_send_telegram") as send:
+            platform_health.get_health(self.platforms)
+        self.assertEqual(send.call_count, 1)
+
+        # 같은 날 같은 조합의 복구가 다시 판정돼도(워커 중복 등) 알림은 한 번이다
+        def rewind(state):
+            state["results"]["soop"] = {"ok": False, "reason": "x"}
+            state["retried_at"] = self._at(7).timestamp()
+
+        platform_health._update_state(rewind)
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok), \
+                patch.object(platform_health, "_send_telegram") as send_again:
+            platform_health.get_health(self.platforms)
+
+        send_again.assert_not_called()
+
 
 class AuthGuardTests(unittest.TestCase):
     """인증번호 잠금은 APP_AUTH 로 켜지고 꺼진다.
