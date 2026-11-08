@@ -7,10 +7,12 @@
 확인은 매일 06시(APP_TZ, 기본 Asia/Seoul)에 한 번만 돌리고 그 결과를 파일에
 보관한다. 새벽에는 라이브 방송이 적어 실패로 돌아올 수 있으므로, 실패한 플랫폼은
 성공할 때까지 1시간마다 그 플랫폼만 다시 확인한다. 자정부터 06시 전까지는
-전일 결과를 그대로 보여준다.
+전일 결과를 그대로 보여준다. 전체 점검 결과는 관리용 텔레그램으로도 보내고,
+실패가 재시도로 복구되면 그 소식도 따로 알려준다.
 """
 
 import fcntl
+import html
 import json
 import logging
 import os
@@ -44,6 +46,23 @@ CHECK_LOOP_SECONDS = 60
 # 점검 결과가 담기는 파일. gunicorn 워커가 같이 쓴다. 기본값은 컨테이너 안 /tmp
 # 여서 재시작하면 첫 요청이 다시 점검한다(상태는 하루짜리라 영속이 필요 없다).
 STATE_ENV = "HEALTH_STATE_FILE"
+
+# 점검 결과를 받아볼 관리용 텔레그램. 비어 있으면 발송하지 않는다(로그로만 남긴다).
+TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ENV = "TELEGRAM_CHAT_ID"
+TELEGRAM_TIMEOUT_SECONDS = 10
+TELEGRAM_RETRIES = 3
+TELEGRAM_RETRY_DELAY_SECONDS = 2
+
+# 메시지에는 화면에서 쓰는 이름으로 적는다.
+_PLATFORM_LABELS = {
+    "soop": "SOOP",
+    "chzzk": "치지직",
+    "cime": "ci.me",
+    "pandalive": "팬더라이브",
+    "popkon": "팝콘TV",
+}
+_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
 
 # 한 플랫폼이 여러 번 연속 실패해도 다른 방송은 될 수 있다.
 # 후보 몇 개를 뽑아 하나라도 성공하면 그 플랫폼은 사용 가능한 것으로 본다.
@@ -220,7 +239,11 @@ def get_health(platforms, force=False):
         "[health] 전체 점검 완료 date=%s ok=%s",
         _date_str(now.date()), [n for n, r in results.items() if r.get("ok")],
     )
-    return _ordered(results, names)
+    ordered = _ordered(results, names)
+    # force=1 은 운영자가 직접 거는 확인이라 결과를 보지 않아도 되므로 발송하지 않는다
+    if not force:
+        _notify_safely(_notify_daily, now, ordered)
+    return ordered
 
 
 def _retry_failed(state, names, platforms, now):
@@ -237,7 +260,99 @@ def _retry_failed(state, names, platforms, now):
         "retried_at": now.timestamp(),
         "results": merged,
     })
+    recovered = [name for name in failed if retried.get(name, {}).get("ok")]
+    if recovered:
+        _notify_safely(_notify_recovery, now, recovered)
     return _ordered(merged, names)
+
+
+def _label(name):
+    return _PLATFORM_LABELS.get(name, name)
+
+
+def _format_heading(when):
+    date_part = f"{when.year}년 {when.month}월 {when.day}일 ({_WEEKDAYS[when.weekday()]})"
+    return f"{date_part} {when.strftime('%H:%M')}"
+
+
+def _build_daily_message(when, results):
+    """06시 전체 점검 결과 안내. auth_guard 의 인증번호 메시지와 같은 HTML 서식이다."""
+    lines = [
+        "📋 <b>M3U8 Grabber 플랫폼 점검</b>",
+        f"📅 {_format_heading(when)}",
+        "",
+    ]
+    for name, state in results.items():
+        if state.get("ok"):
+            lines.append(f"✅ {_label(name)}")
+        else:
+            reason = html.escape(state.get("reason") or "사유 없음")
+            lines.append(f"❌ {_label(name)} — {reason}")
+    ok_count = sum(1 for state in results.values() if state.get("ok"))
+    lines.append("")
+    lines.append(f"<b>{ok_count}/{len(results)}</b> 플랫폼 사용 가능")
+    if ok_count < len(results):
+        lines.append("<i>실패한 플랫폼은 1시간마다 재시도합니다</i>")
+    return "\n".join(lines)
+
+
+def _build_recovery_message(when, recovered):
+    lines = [
+        "🔄 <b>M3U8 Grabber 플랫폼 복구</b>",
+        f"📅 {_format_heading(when)}",
+        "",
+    ]
+    lines += [f"✅ {_label(name)} — 다시 사용할 수 있습니다" for name in recovered]
+    return "\n".join(lines)
+
+
+def _send_telegram(text):
+    """설정돼 있으면 텔레그램으로 보내고, 아니거나 실패하면 False."""
+    token = os.getenv(TELEGRAM_TOKEN_ENV, "").strip()
+    chat_id = os.getenv(TELEGRAM_CHAT_ENV, "").strip()
+    if not token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    for attempt in range(1, TELEGRAM_RETRIES + 1):
+        try:
+            response = requests.post(url, json=payload, timeout=TELEGRAM_TIMEOUT_SECONDS)
+            if response.ok:
+                logger.info("[health] 텔레그램 발송 완료")
+                return True
+            logger.warning(
+                "[health] 텔레그램 응답 %s attempt=%s body=%s",
+                response.status_code, attempt, response.text[:200],
+            )
+        except requests.RequestException as exc:
+            logger.warning("[health] 텔레그램 발송 실패 attempt=%s err=%s", attempt, exc)
+        if attempt < TELEGRAM_RETRIES:
+            time.sleep(TELEGRAM_RETRY_DELAY_SECONDS)
+    return False
+
+
+def _notify_daily(when, results):
+    if _send_telegram(_build_daily_message(when, results)):
+        return
+    summary = ", ".join(
+        f"{_label(name)}={'정상' if state.get('ok') else state.get('reason')}"
+        for name, state in results.items()
+    )
+    logger.warning("[health] 텔레그램 미발송 — 점검 결과: %s", summary)
+
+
+def _notify_recovery(when, recovered):
+    if _send_telegram(_build_recovery_message(when, recovered)):
+        return
+    logger.warning("[health] 텔레그램 미발송 — 복구 알림: %s", recovered)
+
+
+def _notify_safely(notify, *args):
+    """점검 응답 자체가 텔레그램 발송 때문에 깨지지 않도록 알림을 감싼다."""
+    try:
+        notify(*args)
+    except Exception:
+        logger.exception("[health] 텔레그램 알림 중 오류")
 
 
 def start_daily_check(platforms):

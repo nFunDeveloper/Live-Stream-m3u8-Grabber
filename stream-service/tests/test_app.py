@@ -624,7 +624,12 @@ class PlatformHealthScheduleTests(unittest.TestCase):
         handle, self.state_file = tempfile.mkstemp(prefix="ls-health-sched-")
         os.close(handle)
         os.unlink(self.state_file)
-        self.env = patch.dict(os.environ, {platform_health.STATE_ENV: self.state_file})
+        # 테스트 중에 실제 텔레그램 발송이 나가지 않도록 비워 둔다
+        self.env = patch.dict(os.environ, {
+            platform_health.STATE_ENV: self.state_file,
+            platform_health.TELEGRAM_TOKEN_ENV: "",
+            platform_health.TELEGRAM_CHAT_ENV: "",
+        })
         self.env.start()
         self.platforms = {"chzzk": Mock(), "soop": Mock()}
 
@@ -727,6 +732,89 @@ class PlatformHealthScheduleTests(unittest.TestCase):
 
         probe.assert_called_once()
         self.assertEqual(sorted(probe.call_args.args[0]), ["chzzk", "soop"])
+
+    def test_daily_check_result_is_sent_to_telegram(self):
+        now = self._at(6, minute=30)
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok), \
+                patch.object(platform_health, "_send_telegram") as send:
+            platform_health.get_health(self.platforms)
+
+        send.assert_called_once()
+        text = send.call_args.args[0]
+        self.assertIn("플랫폼 점검", text)
+        self.assertIn("치지직", text)  # chzzk 의 화면 이름
+        self.assertIn("SOOP", text)
+        self.assertIn("2/2", text)
+
+    def test_force_check_does_not_send_telegram(self):
+        now = self._at(10)
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok), \
+                patch.object(platform_health, "_send_telegram") as send:
+            platform_health.get_health(self.platforms, force=True)
+
+        # force=1 은 운영자가 직접 거는 확인이라 자동 발송하지 않는다
+        send.assert_not_called()
+
+    def test_recovery_of_failed_platform_sends_alert(self):
+        now = self._at(9)
+        self._save(self.TODAY, {"soop": {"ok": False, "reason": "지금 방송 중인 방송이 없습니다"}},
+                   self._at(7).timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok), \
+                patch.object(platform_health, "_send_telegram") as send:
+            platform_health.get_health(self.platforms)
+
+        send.assert_called_once()
+        text = send.call_args.args[0]
+        self.assertIn("복구", text)
+        self.assertIn("SOOP", text)
+
+    def test_still_failing_retry_sends_nothing(self):
+        now = self._at(9)
+        self._save(self.TODAY, {"soop": {"ok": False, "reason": "x"}},
+                   self._at(7).timestamp())
+
+        def fail(names, platforms):
+            return {name: {"ok": False, "reason": "x"} for name in names}
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names", side_effect=fail), \
+                patch.object(platform_health, "_send_telegram") as send:
+            platform_health.get_health(self.platforms)
+
+        # 여전히 실패라면 복구 알림도 없다
+        send.assert_not_called()
+
+    def test_telegram_sender_skips_when_not_configured(self):
+        with patch.dict(os.environ, {
+            platform_health.TELEGRAM_TOKEN_ENV: "",
+            platform_health.TELEGRAM_CHAT_ENV: "",
+        }), patch.object(platform_health.requests, "post") as post:
+            sent = platform_health._send_telegram("hi")
+
+        self.assertFalse(sent)
+        post.assert_not_called()
+
+    def test_telegram_sender_posts_html(self):
+        with patch.dict(os.environ, {
+            platform_health.TELEGRAM_TOKEN_ENV: "tok",
+            platform_health.TELEGRAM_CHAT_ENV: "1",
+        }), patch.object(platform_health, "TELEGRAM_RETRY_DELAY_SECONDS", 0), \
+                patch.object(platform_health.requests, "post") as post:
+            post.return_value = Mock(ok=True, status_code=200)
+            sent = platform_health._send_telegram("<b>hi</b>")
+
+        self.assertTrue(sent)
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["chat_id"], "1")
+        self.assertEqual(payload["parse_mode"], "HTML")
+        self.assertEqual(payload["text"], "<b>hi</b>")
 
 
 class AuthGuardTests(unittest.TestCase):
