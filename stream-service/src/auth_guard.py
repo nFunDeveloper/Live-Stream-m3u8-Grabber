@@ -160,11 +160,30 @@ def _valid_passwords():
     return pins
 
 
+_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
+
+
 def _build_message(date, today_pin, yesterday_pin):
-    lines = [f"🔑 인증번호 갱신 ({date})", f"오늘: {today_pin}"]
+    """텔레그램에 보낼 인증번호 안내문. parse_mode=HTML 로 코드블록·굵은글씨를 쓴다.
+
+    PIN 은 숫자뿐이라 이스케이프가 필요 없지만, 서식은 항상 이 함수 안에서만 만든다.
+    """
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d")
+        heading = f"{day.year}년 {day.month}월 {day.day}일 ({_WEEKDAYS[day.weekday()]})"
+    except ValueError:
+        heading = date
+
+    parts = [
+        "🔐 <b>M3U8 Grabber 인증번호</b>",
+        f"📅 {heading}",
+        "",
+        f"🆕 오늘 <code>{today_pin}</code>",
+    ]
     if yesterday_pin:
-        lines.append(f"어제: {yesterday_pin} (오늘 24시까지 함께 유효)")
-    return "\n".join(lines)
+        parts.append(f"🕓 어제 <code>{yesterday_pin}</code> — 오늘 24시까지 함께 유효")
+    parts += ["", "<i>매일 00시에 새로운 인증번호로 바뀝니다</i>"]
+    return "\n".join(parts)
 
 
 def _notify_sync(date, today_pin, yesterday_pin):
@@ -183,7 +202,11 @@ def _notify_sync(date, today_pin, yesterday_pin):
         return False
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": _build_message(date, today_pin, yesterday_pin)}
+    payload = {
+        "chat_id": chat_id,
+        "text": _build_message(date, today_pin, yesterday_pin),
+        "parse_mode": "HTML",
+    }
     for attempt in range(1, TELEGRAM_RETRIES + 1):
         try:
             response = requests.post(url, json=payload, timeout=TELEGRAM_TIMEOUT_SECONDS)

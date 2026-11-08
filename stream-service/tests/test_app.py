@@ -978,8 +978,9 @@ class AuthGuardTests(unittest.TestCase):
         self.assertIn("bottest-token/sendMessage", post.call_args.args[0])
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["chat_id"], "12345")
-        self.assertIn("오늘: 111111", payload["text"])
-        self.assertIn("어제: 222222", payload["text"])
+        self.assertEqual(payload["parse_mode"], "HTML")
+        self.assertIn("<code>111111</code>", payload["text"])
+        self.assertIn("<code>222222</code>", payload["text"])
 
     def test_notify_failure_keeps_password_usable(self):
         # 발송이 실패해도 갱신은 끝나고, 새 인증번호는 상태 파일에 남는다.
