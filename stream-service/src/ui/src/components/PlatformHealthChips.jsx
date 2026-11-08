@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { PLATFORM_META } from '../lib/platforms.js';
 
-// 상태를 한 번 알아내면 5분 동안은 다시 물어보지 않는다(백엔드 캐시와 같은 시간)
+// 백엔드는 새벽 06시에 하루 한 번 점검하고(실패한 플랫폼은 1시간마다 재시도),
+// 여기서는 그 결과를 5분마다 다시 받아 새고침 없이 반영한다.
 const REFRESH_MS = 5 * 60 * 1000;
 
 export function usePlatformHealth() {

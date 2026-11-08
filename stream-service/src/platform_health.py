@@ -2,15 +2,24 @@
 
 라이브 목록 API가 플랫폼마다 제각각이라, "지금 방송 중인 방송 몇 개"를 먼저 구한 뒤
 프론트가 정말 타는 경로(플랫폼 모듈 -> SSRF 허용 목록 -> 플레이리스트 읽기)를 그대로
-한 번씩 돌려본다. 이三者 중 하나라도 막히면 그 플랫폼은 지금 쓸 수 없는 것으로 본다.
+한 번씩 돌려본다. 이 셋 중 하나라도 막히면 그 플랫폼은 지금 쓸 수 없는 것으로 본다.
+
+확인은 매일 06시(APP_TZ, 기본 Asia/Seoul)에 한 번만 돌리고 그 결과를 파일에
+보관한다. 새벽에는 라이브 방송이 적어 실패로 돌아올 수 있으므로, 실패한 플랫폼은
+성공할 때까지 1시간마다 그 플랫폼만 다시 확인한다. 자정부터 06시 전까지는
+전일 결과를 그대로 보여준다.
 """
 
+import fcntl
+import json
 import logging
 import os
 import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -25,10 +34,16 @@ from stream_proxy import (
 
 logger = logging.getLogger(__name__)
 
-# 같은 결과를 너무 자주 다시 만들지 않�� 않도록 짧게 캐시한다.
-# 플랫폼 상태는 몇 분 안에 바뀌지 않지만, 매 페이지 로드마다 5개 플랫폼을
-# 전부 붙잡고 있으면 업���림에 부담이 된다.
-CACHE_TTL_SECONDS = 300
+# 매일 이 시각(APP_TZ 기준)에 전체 점검을 한 번 돌린다.
+DAILY_CHECK_HOUR = 6
+# 전체 점검에서 실패한 플랫폼은 이 간격마다 다시 확인한다(성공할 때까지).
+RETRY_INTERVAL_SECONDS = 3600
+# 백그라운드 점검 스레드가 잠들어 있는 시간. 요청이 없어도 시각이 바뀌면 점검한다.
+CHECK_LOOP_SECONDS = 60
+
+# 점검 결과가 담기는 파일. gunicorn 워커가 같이 쓴다. 기본값은 컨테이너 안 /tmp
+# 여서 재시작하면 첫 요청이 다시 점검한다(상태는 하루짜리라 영속이 필요 없다).
+STATE_ENV = "HEALTH_STATE_FILE"
 
 # 한 플랫폼이 여러 번 연속 실패해도 다른 방송은 될 수 있다.
 # 후보 몇 개를 뽑아 하나라도 성공하면 그 플랫폼은 사용 가능한 것으로 본다.
@@ -65,32 +80,189 @@ POPKON_HEADERS = {
     ),
 }
 
-_cache = {}
-_cache_lock = threading.Lock()
+_state_lock = threading.Lock()
+_started = False
 
 
-def get_health(platforms, force=False):
-    """플랫폼별 사용 가능 여부를 돌려준다. 결과는 짧은 시간 동안 캐시된다."""
-    if not force:
-        with _cache_lock:
-            cached = _cache.get("checked_at")
-            if cached and time.monotonic() - cached < CACHE_TTL_SECONDS:
-                return _cache["results"]
+def _now():
+    """APP_TZ(기본 Asia/Seoul) 기준 현재 시각.
 
-    names = [name for name in platforms if name != "afreeca"]  # SOOP 별칭이라 같은 플랫폼이다
+    컨테이너는 기본값이 UTC라서 그대로 쓰면 한국의 06시에 점검되지 않는다.
+    auth_guard 와 같은 방식이다(의존성 순환을 피해 자체 복사).
+    """
+    name = os.getenv("APP_TZ", "Asia/Seoul").strip() or "Asia/Seoul"
+    try:
+        tz = ZoneInfo(name)
+    except Exception:
+        logger.warning("[health] 알 수 없는 시간대 %s — Asia/Seoul 로 대신한다", name)
+        tz = ZoneInfo("Asia/Seoul")
+    return datetime.now(tz)
+
+
+def _date_str(day):
+    return day.strftime("%Y-%m-%d")
+
+
+def _dawn_epoch(now):
+    """now 와 같은 날의 전체 점검 시각(06:00)을 epoch 초로 환산한다."""
+    return now.replace(hour=DAILY_CHECK_HOUR, minute=0, second=0, microsecond=0).timestamp()
+
+
+def _state_path():
+    return os.getenv(STATE_ENV, "/tmp/ls-grabber-health.json")
+
+
+def _load_state():
+    """상태 파일을 읽는다. 없거나 깨져 있으면 None."""
+    path = _state_path()
+    with _state_lock:
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            raw = os.read(fd, 1 << 20)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def _save_state(state):
+    """상태 파일을 덮어쓴다. 워커가 겹쳐도 파일 락 때문에 내용이 섞이지 않는다."""
+    path = _state_path()
+    payload = json.dumps(state, ensure_ascii=False).encode("utf-8")
+    with _state_lock:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, payload)
+            os.fsync(fd)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+def _is_fresh(state, now):
+    """저장된 결과를 지금 보여줘도 되는지.
+
+    06시 전에는 전일(또는 이른 시각에 만든 당일) 결과를 그대로 쓰고,
+    06시가 지나면 오늘 점검 결과만 믿는다.
+    """
+    if not state or not state.get("date") or not state.get("results"):
+        return False
+    if now.timestamp() < _dawn_epoch(now):
+        yesterday = _date_str(now.date() - timedelta(days=1))
+        return state["date"] in {_date_str(now.date()), yesterday}
+    return state["date"] == _date_str(now.date())
+
+
+def _retry_due(state, now):
+    """오늘 점검에서 실패한 플랫폼이 있으면 1시간마다 다시 확인한다.
+
+    자정~06시는 전일 결과만 보여주는 시간이라 재시도하지 않는다.
+    """
+    if now.timestamp() < _dawn_epoch(now):
+        return False
+    if not any(not result.get("ok") for result in state["results"].values()):
+        return False
+    retried_at = state.get("retried_at") or 0
+    return now.timestamp() - retried_at >= RETRY_INTERVAL_SECONDS
+
+
+def _ordered(results, names):
+    """응답은 항상 등록 순서로. 아직 점검하지 못한 플랫폼은 사유를 채운다."""
+    return {
+        name: results.get(name, {"ok": False, "reason": "확인하지 못했습니다"})
+        for name in names
+    }
+
+
+def _probe_names(names, platforms):
+    """주어진 플랫폼 이름들을 병렬로 실제로 받아본다."""
     results = {}
     with ThreadPoolExecutor(max_workers=max(len(names), 1)) as pool:
         futures = {pool.submit(_probe_platform, name, platforms[name]): name for name in names}
         for future in as_completed(futures):
             results[futures[future]] = future.result()
+    return results
 
-    # 요청 응답 순서가 매번 달라지므로 항상 등록 순서로 정리한다
-    ordered = {name: results.get(name, {"ok": False, "reason": "확인하지 못했습니다"}) for name in names}
 
-    with _cache_lock:
-        _cache["checked_at"] = time.monotonic()
-        _cache["results"] = ordered
-    return ordered
+def get_health(platforms, force=False):
+    """플랫폼별 사용 가능 여부를 돌려준다.
+
+    매일 06시에 전체를 한 번 점검하고, 실패한 플랫폼은 성공할 때까지 1시간마다
+    다시 확인한다. 그 사이에는 저장된 결과를 네트워크 없이 돌려준다.
+    `force=True`는 저장본을 무시하고 전체를 다시 점검한다(라우트의 ?force=1).
+    """
+    names = [name for name in platforms if name != "afreeca"]  # SOOP 별칭이라 같은 플랫폼이다
+    now = _now()
+    state = _load_state()
+
+    if not force and _is_fresh(state, now):
+        if _retry_due(state, now):
+            return _retry_failed(state, names, platforms, now)
+        return _ordered(state["results"], names)
+
+    results = _probe_names(names, platforms)
+    _save_state({
+        "date": _date_str(now.date()),
+        "retried_at": now.timestamp(),
+        "results": results,
+    })
+    logger.info(
+        "[health] 전체 점검 완료 date=%s ok=%s",
+        _date_str(now.date()), [n for n, r in results.items() if r.get("ok")],
+    )
+    return _ordered(results, names)
+
+
+def _retry_failed(state, names, platforms, now):
+    """실패한 플랫폼만 다시 점검해 저장된 결과와 합친다."""
+    failed = [name for name in names if not state["results"].get(name, {}).get("ok")]
+    if not failed:
+        return _ordered(state["results"], names)
+    logger.info("[health] 실패 플랫폼 재시도 %s", failed)
+    retried = _probe_names(failed, platforms)
+    merged = dict(state["results"])
+    merged.update(retried)
+    _save_state({
+        "date": state["date"],
+        "retried_at": now.timestamp(),
+        "results": merged,
+    })
+    return _ordered(merged, names)
+
+
+def start_daily_check(platforms):
+    """백그라운드에서 매일 점검을 돌린다. app.py 가 platforms 를 정의한 뒤 한 번 부른다."""
+    global _started
+    if _started:
+        return
+    _started = True
+    threading.Thread(
+        target=_check_loop, args=(platforms,), name="health-check", daemon=True,
+    ).start()
+
+
+def _check_loop(platforms):
+    """60초마다 시각을 확인한다.
+
+    06시가 지나면 전체 점검을 돌리고, 그 뒤로는 1시간마다 실패 플랫폼만 다시 본다.
+    워커마다 한 스레드씩 돌지만 상태 파일로 결과를 공유한다.
+    """
+    while True:
+        time.sleep(CHECK_LOOP_SECONDS)
+        try:
+            get_health(platforms)
+        except Exception:
+            logger.exception("[health] 자동 점검 중 오류")
 
 
 def _probe_platform(name, platform):

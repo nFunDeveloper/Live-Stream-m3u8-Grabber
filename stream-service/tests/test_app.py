@@ -4,9 +4,10 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -471,10 +472,17 @@ class PlatformHealthApiTests(unittest.TestCase):
 
     def setUp(self):
         self.client = app_module.app.test_client()
-        platform_health._cache.clear()
+        # 실제 기계의 상태 파일을 건드리지 않도록 임시 파일에 격리한다
+        handle, self.state_file = tempfile.mkstemp(prefix="ls-health-test-")
+        os.close(handle)
+        os.unlink(self.state_file)
+        self.env = patch.dict(os.environ, {platform_health.STATE_ENV: self.state_file})
+        self.env.start()
 
     def tearDown(self):
-        platform_health._cache.clear()
+        self.env.stop()
+        if os.path.exists(self.state_file):
+            os.unlink(self.state_file)
 
     def test_reports_ok_when_stream_is_fetchable(self):
         chzzk = fake_platform(m3u8_url="https://livecloud.pstatic.net/ab/master.m3u8")
@@ -482,7 +490,7 @@ class PlatformHealthApiTests(unittest.TestCase):
         with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
                 patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
                 patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         self.assertEqual(response.status_code, 200)
         entry = response.get_json()["platforms"][0]
@@ -495,7 +503,7 @@ class PlatformHealthApiTests(unittest.TestCase):
         chzzk = fake_platform(m3u8_url="https://unknown-cdn.example.com/master.m3u8")
         with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
                 patch.object(platform_health, "_sample_streamers", return_value=["abc"]):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         entry = response.get_json()["platforms"][0]
         self.assertFalse(entry["ok"])
@@ -505,7 +513,7 @@ class PlatformHealthApiTests(unittest.TestCase):
         chzzk = fake_platform(m3u8_url="")
         with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
                 patch.object(platform_health, "_sample_streamers", return_value=["abc"]):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         entry = response.get_json()["platforms"][0]
         self.assertFalse(entry["ok"])
@@ -517,7 +525,7 @@ class PlatformHealthApiTests(unittest.TestCase):
         with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
                 patch.object(platform_health, "_sample_streamers", return_value=["abc"]), \
                 patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         self.assertTrue(response.get_json()["platforms"][0]["ok"])
 
@@ -535,7 +543,7 @@ class PlatformHealthApiTests(unittest.TestCase):
         with patch.dict(app_module.platforms, {"chzzk": chzzk}, clear=True), \
                 patch.object(platform_health, "_sample_streamers", return_value=["off", "on"]), \
                 patch.object(platform_health, "open_stream", return_value=_fake_upstream(playlist)):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         self.assertTrue(response.get_json()["platforms"][0]["ok"])
 
@@ -548,7 +556,7 @@ class PlatformHealthApiTests(unittest.TestCase):
                     "open_stream",
                     return_value=_fake_upstream("#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n"),
                 ):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         names = [item["platform"] for item in response.get_json()["platforms"]]
         self.assertEqual(names, ["soop"])
@@ -562,7 +570,7 @@ class PlatformHealthApiTests(unittest.TestCase):
                     platform_health, "open_stream",
                     side_effect=platform_health.ProxyError("403 for url=https://cdn.example.com/m.m3u8?token=SECRET"),
                 ):
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
 
         entry = response.get_json()["platforms"][0]
         self.assertFalse(entry["ok"])
@@ -571,9 +579,6 @@ class PlatformHealthApiTests(unittest.TestCase):
 
 class PlatformHealthProbeTests(unittest.TestCase):
     """health 조회가 살아 있는 방송 후보를 플랫폼마다 올바르게 고르는지 확인한다"""
-
-    def setUp(self):
-        platform_health._cache.clear()
 
     def test_popkon_skips_adult_and_private_broadcasts(self):
         class _Fake:
@@ -603,6 +608,125 @@ class PlatformHealthProbeTests(unittest.TestCase):
 
         # streamer_id 가 비어 있는 항목은 제외된다
         self.assertEqual(sorted(ids), ["aaa", "bbb"])
+
+
+class PlatformHealthScheduleTests(unittest.TestCase):
+    """새벽 06시 하루 1회 점검과 실패 플랫폼 1시간 재시도를 확인한다.
+
+    시각은 전부 고정값으로 조작하고, 실제 프로브는 _probe_names 패치로 대체한다.
+    """
+
+    TZ = ZoneInfo("Asia/Seoul")
+    TODAY = "2026-11-08"
+    YESTERDAY = "2026-11-07"
+
+    def setUp(self):
+        handle, self.state_file = tempfile.mkstemp(prefix="ls-health-sched-")
+        os.close(handle)
+        os.unlink(self.state_file)
+        self.env = patch.dict(os.environ, {platform_health.STATE_ENV: self.state_file})
+        self.env.start()
+        self.platforms = {"chzzk": Mock(), "soop": Mock()}
+
+    def tearDown(self):
+        self.env.stop()
+        if os.path.exists(self.state_file):
+            os.unlink(self.state_file)
+
+    def _at(self, hour, minute=0, day_offset=0):
+        base = datetime(2026, 11, 8, hour, minute, tzinfo=self.TZ)
+        return base + timedelta(days=day_offset)
+
+    def _save(self, date, results, retried_at):
+        platform_health._save_state({
+            "date": date,
+            "retried_at": retried_at,
+            "results": results,
+        })
+
+    @staticmethod
+    def _probe_ok(names, platforms):
+        return {name: {"ok": True, "reason": ""} for name in names}
+
+    def test_fresh_today_result_is_served_without_probing(self):
+        now = self._at(10)
+        self._save(self.TODAY, {"chzzk": {"ok": True, "reason": ""}}, now.timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names") as probe:
+            results = platform_health.get_health(self.platforms)
+
+        probe.assert_not_called()
+        self.assertTrue(results["chzzk"]["ok"])
+
+    def test_full_check_runs_after_dawn_when_only_yesterdays_result_exists(self):
+        now = self._at(6, minute=30)
+        self._save(self.YESTERDAY, {"chzzk": {"ok": True, "reason": ""}},
+                   self._at(6, day_offset=-1).timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok) as probe:
+            platform_health.get_health(self.platforms)
+
+        self.assertEqual(sorted(probe.call_args.args[0]), ["chzzk", "soop"])
+        self.assertEqual(platform_health._load_state()["date"], self.TODAY)
+
+    def test_before_dawn_serves_yesterdays_result_without_probing(self):
+        now = self._at(2)
+        self._save(self.YESTERDAY, {"soop": {"ok": False, "reason": "지금 방송 중인 방송이 없습니다"}},
+                   self._at(6, day_offset=-1).timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names") as probe:
+            results = platform_health.get_health(self.platforms)
+
+        # 자정~06시는 전일 결과를 그대로 보여주고 점검·재시도 모두 없다
+        probe.assert_not_called()
+        self.assertFalse(results["soop"]["ok"])
+
+    def test_failed_platform_retries_hourly_and_ok_results_are_kept(self):
+        now = self._at(9)
+        self._save(self.TODAY, {
+            "chzzk": {"ok": True, "reason": ""},
+            "soop": {"ok": False, "reason": "지금 방송 중인 방송이 없습니다"},
+        }, self._at(7).timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok) as probe:
+            results = platform_health.get_health(self.platforms)
+
+        # 성공한 플랫폼은 건드리지 않고 실패한 것만 다시 점검한다
+        self.assertEqual(probe.call_args.args[0], ["soop"])
+        self.assertTrue(results["soop"]["ok"])
+        self.assertTrue(results["chzzk"]["ok"])
+        state = platform_health._load_state()
+        self.assertTrue(state["results"]["soop"]["ok"])
+        self.assertEqual(state["date"], self.TODAY)
+
+    def test_retry_waits_a_full_hour(self):
+        now = self._at(9)
+        self._save(self.TODAY, {"soop": {"ok": False, "reason": "x"}},
+                   self._at(8, minute=30).timestamp())  # 30분 전 — 아직 이르다
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names") as probe:
+            platform_health.get_health(self.platforms)
+
+        probe.assert_not_called()
+
+    def test_force_probes_everything_even_when_fresh(self):
+        now = self._at(10)
+        self._save(self.TODAY, {"chzzk": {"ok": True, "reason": ""}}, now.timestamp())
+
+        with patch.object(platform_health, "_now", return_value=now), \
+                patch.object(platform_health, "_probe_names",
+                             side_effect=self._probe_ok) as probe:
+            platform_health.get_health(self.platforms, force=True)
+
+        probe.assert_called_once()
+        self.assertEqual(sorted(probe.call_args.args[0]), ["chzzk", "soop"])
 
 
 class AuthGuardTests(unittest.TestCase):
@@ -690,7 +814,7 @@ class AuthGuardTests(unittest.TestCase):
     def test_api_works_after_login(self):
         with patch.object(app_module, "get_health", return_value={}):
             self._login()
-            response = self.client.get("/api/platforms/health")
+            response = self.client.get("/api/platforms/health?force=1")
         self.assertEqual(response.status_code, 200)
 
     def test_nonce_cannot_be_replayed(self):
@@ -791,7 +915,7 @@ class AuthGuardTests(unittest.TestCase):
         with patch.dict(os.environ, {"APP_AUTH": "off"}):
             self.assertFalse(auth_guard.is_enabled())
             with patch.object(app_module, "get_health", return_value={}):
-                self.assertEqual(self.client.get("/api/platforms/health").status_code, 200)
+                self.assertEqual(self.client.get("/api/platforms/health?force=1").status_code, 200)
 
     def test_yesterday_password_is_accepted(self):
         # 방송이 새벽까지 이어지므로 어제 인증번호도 하루 더 통과한다.

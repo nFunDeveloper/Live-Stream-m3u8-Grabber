@@ -9,7 +9,7 @@ from platform_modules.cime import Cime
 from platform_modules.pandalive import Pandalive
 from platform_modules.popkon import Popkon
 from platform_modules.soop import Soop
-from platform_health import get_health
+from platform_health import get_health, start_daily_check
 import auth_guard
 from auth_guard import install as install_auth_guard
 from stream_proxy import (
@@ -53,6 +53,10 @@ platforms = {
     'pandalive': Pandalive(),
     'popkon': Popkon(),
 }
+
+# 연결 상태 점검은 매일 06시에 한 번, 실패한 플랫폼은 1시간마다 다시 돌린다.
+# 요청이 없는 새벽에도 점검이 나가도록 백그라운드에서 시작한다.
+start_daily_check(platforms)
 
 auto_parsing_db = {
     'chzzk.naver.com': ("chzzk", 2),
